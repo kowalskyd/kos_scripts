@@ -221,7 +221,7 @@ if ship:body:name <> "Mun" {
   lock steering to prograde.
   if ETA:periapsis > 200 {
     set MAPVIEW to true.
-    warpto(time:seconds + ETA:periapsis - 200).
+    warpto(time:seconds + ETA:periapsis - 100).
     wait until kuniverse:timewarp:rate = 1.
     set MAPVIEW to false.
   }
@@ -303,7 +303,7 @@ if ship:body:name <> "Mun" {
   chutes on.
 
   local heatshieldJettisoned is false.
-
+  
   until ship:velocity:surface:mag < 200 or ship:altitude < 5000 {
     lock steering to srfretrograde.
     updateTelemetry(ship:velocity:surface:mag, ship:altitude, ship:orbit:apoapsis, ship:orbit:periapsis, eta:apoapsis, eta:periapsis).
