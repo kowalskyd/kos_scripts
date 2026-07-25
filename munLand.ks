@@ -129,7 +129,7 @@ if ship:body:name <> "Mun" {
       set burnTime to burnTime + (360 / relDegPerSec).
     }
 
-    local dvNeeded is hTrans(ship:altitude, 5000).
+    local dvNeeded is hTrans(ship:altitude, 8000).
     local deorbitNode is node(burnTime, 0, 0, dvNeeded).
     add deorbitNode.
     wait 0.1.
