@@ -8,7 +8,7 @@ The **KAL-9000** suite provides end-to-end mission automation—from launchpad l
 
 ## Video Demonstration
 
-[![KAL-9000 Mun Mission Demonstration](https://img.youtube.com/vi/YOUR_YOUTUBE_VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=YOUR_YOUTUBE_VIDEO_ID)
+[![KAL-9000 Mun Mission Demonstration](https://img.youtube.com/vi/pz-3-4b7OJE/0.jpg)](https://www.youtube.com/watch?v=pz-3-4b7OJE)
 
 *Watch the KAL-9000 flight software execute a full automated Mun mission from Kerbin liftoff to lunar landing and return.*
 
