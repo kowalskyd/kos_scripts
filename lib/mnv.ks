@@ -119,48 +119,24 @@ global function exeMnv {
     set max_acc to max(0.001, ship:maxthrust/ship:mass).
     set burn_duration to myNode:deltav:mag/max_acc.
 
-    local margin is deltaTime.
-    if margin = -1 {
-      set margin to max(10, min(60, ship:mass / 5)).
-    }
-
-    // Lock steering to align BEFORE warping, ensuring massive ships are pre-aligned
-    lock steering to myNode:deltav.
-
-    if myNode:ETA - burn_duration/2 - margin > 15 {
-      if defined hudActive {
-        logChatter("CapCom", "Aligning spacecraft with maneuver node...").
-      } else {
-        print "Aligning with maneuver node...".
-      }
-      local alignTimeout is time:seconds + 45. // Allow up to 45s for massive ships to turn
-      until vAng(ship:facing:vector, myNode:deltaV) < 1.5 or time:seconds > alignTimeout {
-        wait 0.1.
-      }
-      
+    local leadTime is max(10, burn_duration / 2 + 12).
+    if myNode:ETA > leadTime + 5 {
       set MAPVIEW to true.
-      kuniverse:timewarp:warpto(time:seconds + myNode:ETA - burn_duration/2 - margin).
-      wait until kuniverse:timewarp:issettled.
+      kuniverse:timewarp:warpto(time:seconds + myNode:ETA - leadTime).
+      wait until kuniverse:timewarp:issettled or kuniverse:timewarp:rate = 1.
       set MAPVIEW to false.
     }
 
-    if defined playOrbitScene {
-      playOrbitScene(margin).
-    }
-
-    // Final precision alignment lock
     lock steering to myNode:deltav.
-    wait until vAng(ship:facing:vector, myNode:deltaV) < 1.
-    global mnvSteer is myNode:deltav.
-    lock steering to mnvSteer.
-    until myNode:eta <= (burn_duration/2 + 3) {
-      if defined hudActive {
-        updateTelemetry(ship:velocity:orbit:mag, ship:altitude, ship:orbit:apoapsis, ship:orbit:periapsis, eta:apoapsis, eta:periapsis).
-      } else {
-        print "Maneuver in: " + round(myNode:ETA - burn_duration/2, 2) + " s      " at (0,6).
-      }
+    if defined hudActive {
+      logChatter("CapCom", "Aligning spacecraft with maneuver node...").
+    }
+    local alignTimeout is time:seconds + 12.
+    until vAng(ship:facing:vector, myNode:deltav) < 2.0 or time:seconds > alignTimeout or myNode:ETA <= (burn_duration / 2 + 1) {
       wait 0.1.
     }
+    global mnvSteer is myNode:deltav.
+    lock steering to mnvSteer.
 
     local burnSceneDur is max(5, myNode:eta - (burn_duration/2) + burn_duration).
     playBurnScene(burnSceneDur).
