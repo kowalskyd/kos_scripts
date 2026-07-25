@@ -351,9 +351,20 @@ if ship:body:name <> "Mun" {
   set ship:control:pilotMainThrottle to 0.
   sas on.
 
-  logChatter("CapCom", "Waiting for capsule touchdown/splashdown.").
+  logChatter("CapCom", "Engaging 4x physics warp for final parachute descent.").
+  hudMsg("DESCENT WARP ACTIVE").
+  set warpmode to "physics".
+  set warp to 3.
 
-  wait until ship:status = "LANDED" or ship:status = "SPLASHED".
+  until ship:status = "LANDED" or ship:status = "SPLASHED" {
+    if alt:radar < 15 {
+      set warp to 0.
+    }
+    updateTelemetry(ship:velocity:surface:mag, ship:altitude, ship:orbit:apoapsis, ship:orbit:periapsis, eta:apoapsis, eta:periapsis).
+    wait 0.1.
+  }
+  set warp to 0.
+  wait until kuniverse:timewarp:rate = 1.
 
   initScreen("welcome_home").
   logChatter("CapCom", "Welcome home, Kerbonauts! Mission completed!").
