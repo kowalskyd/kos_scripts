@@ -39,7 +39,7 @@ if ship:status = "PRELAUNCH" or ship:status = "FLYING" or ship:orbit:periapsis <
 
   // 2. Perform Mid-Course correction in Kerbin SOI (extremely cheap and precise)
   logChatter("CapCom", "Fine-tuning Mun periapsis mid-course...").
-  setNewPeriapsis(35000, 120, true).
+  setNewPeriapsis(55000, 120, true).
   exeMnv().
   wait 1.5.
 

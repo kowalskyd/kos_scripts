@@ -119,12 +119,13 @@ global function exeMnv {
     set max_acc to max(0.001, ship:maxthrust/ship:mass).
     set burn_duration to myNode:deltav:mag/max_acc.
 
+    local wasMap is MAPVIEW.
     local leadTime is max(10, burn_duration / 2 + 12).
     if myNode:ETA > leadTime + 5 {
       set MAPVIEW to true.
       kuniverse:timewarp:warpto(time:seconds + myNode:ETA - leadTime).
       wait until kuniverse:timewarp:issettled or kuniverse:timewarp:rate = 1.
-      set MAPVIEW to false.
+      if not wasMap { set MAPVIEW to false. }
     }
 
     lock steering to myNode:deltav.

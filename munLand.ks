@@ -83,6 +83,7 @@ if ship:body:name <> "Mun" {
   // STEP 1: Select Illuminated Flat Crater & Deorbit to 7km
   // -------------------------------------------
   logChatter("CapCom", "Step 1: Selecting illuminated flat crater basin.").
+  set MAPVIEW to true.
   wait 1.
 
   // Define flat equatorial crater basin candidates (smooth crater floors away from rims)
@@ -146,6 +147,7 @@ if ship:body:name <> "Mun" {
   // STEP 2: Warp to periapsis
   // -------------------------------------------
   logChatter("CapCom", "Step 2: Warping to periapsis landing entry.").
+  set MAPVIEW to true.
   wait 1.
 
   // Align surface retrograde first to ensure we are aligned before warping
@@ -156,15 +158,14 @@ if ship:body:name <> "Mun" {
 
   if ETA:periapsis > 20 {
     logChatter("CapCom", "Warping to periapsis landing entry...").
-    set MAPVIEW to true.
     warpto(time:seconds + ETA:periapsis - 15).
     wait until kuniverse:timewarp:issettled or kuniverse:timewarp:rate = 1.
-    set MAPVIEW to false.
   }
 
   // Quick vector check at periapsis before burn ignition
   lock steering to srfretrograde.
   wait until vAng(ship:facing:vector, srfretrograde:vector) < 3 or ETA:periapsis < 3.
+  set MAPVIEW to false.
 
   // -------------------------------------------
   // STEP 3: Kill horizontal velocity at periapsis
