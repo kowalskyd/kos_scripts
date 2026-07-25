@@ -150,24 +150,21 @@ if ship:body:name <> "Mun" {
 
   // Align surface retrograde first to ensure we are aligned before warping
   logChatter("Crew", "Aligning spacecraft to surface retrograde...").
-  playAlignScene(10).
   lock steering to srfretrograde.
-  wait until vAng(ship:facing:vector, srfretrograde:vector) < 5.
+  wait until vAng(ship:facing:vector, srfretrograde:vector) < 5 or ETA:periapsis < 15.
   logChatter("Crew", "Retrograde lock confirmed.").
 
   if ETA:periapsis > 20 {
     logChatter("CapCom", "Warping to periapsis landing entry...").
     set MAPVIEW to true.
-    local targetTime is time:seconds + ETA:periapsis - 10.
-    warpto(targetTime).
-    wait until time:seconds >= targetTime.
+    warpto(time:seconds + ETA:periapsis - 15).
+    wait until kuniverse:timewarp:issettled or kuniverse:timewarp:rate = 1.
     set MAPVIEW to false.
   }
 
-  // Final alignment before deorbit burn
+  // Quick vector check at periapsis before burn ignition
   lock steering to srfretrograde.
-  wait until vAng(ship:facing:vector, srfretrograde:vector) < 3.
-  wait until ETA:periapsis < 3 or ETA:periapsis > ship:orbit:period - 5.
+  wait until vAng(ship:facing:vector, srfretrograde:vector) < 3 or ETA:periapsis < 3.
 
   // -------------------------------------------
   // STEP 3: Kill horizontal velocity at periapsis
