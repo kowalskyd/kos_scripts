@@ -47,7 +47,7 @@ if ship:status = "PRELAUNCH" or ship:status = "FLYING" or ship:orbit:periapsis <
   logChatter("CapCom", "Warping to Mun SOI transition.").
   set MAPVIEW to true.
   if ETA:transition > 30 {
-    warpto(time:seconds + ETA:transition - 15).
+    warpto(time:seconds + ETA:transition - 20).
     wait until kuniverse:timewarp:rate = 1.
   }
   wait until ship:body:name = "Mun".

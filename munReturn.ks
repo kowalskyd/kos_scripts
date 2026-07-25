@@ -27,7 +27,6 @@ if ship:body:name <> "Mun" {
 } else {
   runOncePath("0:/lib/hud.ks").
   initScreen("mun_return").
-  SET KUNIVERSE:TIMEWARP:MODE TO "RAILS".
   logChatter("CapCom", "Trans-Kerbin return sequence initiated.").
   hudMsg("RETURN SEQUENCE ACTIVE").
 
@@ -184,10 +183,8 @@ if ship:body:name <> "Mun" {
     logChatter("CapCom", "Step 3: Coasting out of Mun's sphere of influence...").
     lock steering to prograde.
     set MAPVIEW to true.
-    if ETA:transition > 30 {
-      warpto(time:seconds + ETA:transition - 15).
-      wait until kuniverse:timewarp:rate = 1.
-    }
+    warpto(time:seconds + ETA:transition + 30).
+    wait until kuniverse:timewarp:rate = 1.
     wait until ship:body:name = "Kerbin".
     set MAPVIEW to false.
     
@@ -222,12 +219,15 @@ if ship:body:name <> "Mun" {
   logChatter("CapCom", "Step 4: Warping to atmospheric interface.").
   
   lock steering to prograde.
-  if ship:altitude > 75000 {
+  if ETA:periapsis > 200 {
     set MAPVIEW to true.
-    warpto(time:seconds + max(10, ETA:periapsis - 60)).
+    warpto(time:seconds + ETA:periapsis - 200).
     wait until kuniverse:timewarp:rate = 1.
     set MAPVIEW to false.
   }
+
+  logChatter("CapCom", "Approaching atmosphere. Waiting altitude 100k.").
+  wait until ship:altitude <= 100000.
 
   // -------------------------------------------
   // STEP 5: Reentry preparation (100k)
@@ -281,14 +281,6 @@ if ship:body:name <> "Mun" {
   logChatter("CapCom", "Atmospheric entry confirmed. Communications black-out imminent.").
   hudMsg("ATMOSPHERIC ENTRY", rgb(1,0,0)).
   playReentryScene().
-
-  WHEN SHIP:ALTITUDE < 40000 THEN {
-    SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
-    SET KUNIVERSE:TIMEWARP:RATE TO 3.
-    WHEN ALT:RADAR < 1000 THEN {
-      SET KUNIVERSE:TIMEWARP:RATE TO 1.
-    }
-  }
 
   // -------------------------------------------
   // STEP 6: Descent and parachute deployment
