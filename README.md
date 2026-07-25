@@ -30,13 +30,13 @@ The **KAL-9000** suite provides end-to-end mission automation—from launchpad l
 
 ## Overview & Key Capabilities
 
-- 🚀 **Automated Ascent & Gravity Turn**: Dynamic pitch program based on atmospheric density, target apoapsis, automatic staging, fairing ejection, and circularization burns.
-- 🌕 **Complete Lunar Mission Profiles (Mun & Minmus)**: Fully automated end-to-end mission controllers performing orbital launch, plane alignment, transfer injection burns, capture, powered descent suicide landings, surface liftoff, and Kerbin re-entry.
-- ⚓ **Autonomous 6-DOF Rendezvous & Docking v4**: Route planning with interactive port selection, relative velocity braking, approach corridor alignment, and RCS translational docking control.
-- 🛬 **Terrain-Aware Suicide Burn & Landing**: Radar-based terrain tracking, deceleration distance calculation, dynamic throttle control, and touchdown mitigation.
-- 🎥 **Cinematic Camera Director**: Integration with `kOS-StockCamera` addon for automated multi-angle shots during staging, maneuver burns, landings, and timewarp protection.
-- 🖥️ **KAL-9000 HUD Interface**: Real-time 50x24 terminal GUI with telemetry, resource tracking, suicide burn gauge, pre-flight diagnostics checkmarks, and crew radio chatter logs.
-- 🛡️ **G-Force & Acceleration Limiting**: Dynamic engine thrust limiting to respect structural limits (e.g. 3.0G max acceleration) during maneuvers.
+- **Automated Ascent & Gravity Turn**: Dynamic pitch program based on atmospheric density, target apoapsis, automatic staging, fairing ejection, and circularization burns.
+- **Complete Lunar Mission Profiles (Mun & Minmus)**: Fully automated end-to-end mission controllers performing orbital launch, plane alignment, transfer injection burns, capture, powered descent suicide landings, surface liftoff, and Kerbin re-entry.
+- **Autonomous 6-DOF Rendezvous & Docking v4**: Route planning with interactive port selection, relative velocity braking, approach corridor alignment, and RCS translational docking control.
+- **Terrain-Aware Suicide Burn & Landing**: Radar-based terrain tracking, deceleration distance calculation, dynamic throttle control, and touchdown mitigation.
+- **Cinematic Camera Director**: Integration with `kOS-StockCamera` addon for automated multi-angle shots during staging, maneuver burns, landings, and timewarp protection.
+- **KAL-9000 HUD Interface**: Real-time 50x24 terminal GUI with telemetry, resource tracking, suicide burn gauge, pre-flight diagnostics checkmarks, and crew radio chatter logs.
+- **G-Force & Acceleration Limiting**: Dynamic engine thrust limiting to respect structural limits (e.g. 3.0G max acceleration) during maneuvers.
 
 ---
 
