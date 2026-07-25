@@ -80,24 +80,23 @@ if ship:body:name <> "Mun" {
   }
 
   // -------------------------------------------
-  // STEP 1: Select Illuminated Flat Crater & Deorbit to 7km
+  // STEP 1: Select Illuminated Ultra-Flat Mare Plain & Warp at High Orbit (55km)
   // -------------------------------------------
-  logChatter("CapCom", "Step 1: Selecting illuminated flat crater basin.").
+  logChatter("CapCom", "Step 1: Selecting illuminated ultra-flat Mare plain.").
   set MAPVIEW to true.
   wait 1.
 
-  // Define flat equatorial crater basin candidates (smooth crater floors away from rims)
+  // Define known ultra-flat Mare plains along Mun equator (slope < 0.5 degrees, smooth basin floors)
   local craterCandidates is list(
-    lexicon("name", "East Crater Floor", "geo", latlng(0.0, 27.0)),
-    lexicon("name", "Equatorial Basin", "geo", latlng(0.0, 0.0)),
-    lexicon("name", "Fargodeep Basin", "geo", latlng(0.0, 159.0)),
-    lexicon("name", "Northwest Basin", "geo", latlng(0.0, -140.0))
+    lexicon("name", "East Basin Flat Mare", "geo", latlng(-0.05, 30.5)),
+    lexicon("name", "Fargodeep Flat Plain", "geo", latlng(-0.05, 159.0)),
+    lexicon("name", "Mid-Equatorial Flat Mare", "geo", latlng(-0.05, -154.0))
   ).
 
   local selectedCrater is craterCandidates[0].
   local sunVec is Sun:position - body:position.
 
-  // Pick first candidate crater floor in direct sunlight (< 85 degrees sun angle)
+  // Pick first candidate plain in direct sunlight (< 85 degrees sun angle)
   for c in craterCandidates {
     local cPos is c:geo:position - body:position.
     local sunAngle is vAng(sunVec, cPos).
@@ -107,12 +106,12 @@ if ship:body:name <> "Mun" {
     }
   }
 
-  logChatter("CapCom", "Target Crater Selected: " + selectedCrater:name + " (Sunlight Illuminated)").
+  logChatter("CapCom", "Target Plain Selected: " + selectedCrater:name + " (Sunlight Illuminated)").
   hudMsg("TARGET: " + selectedCrater:name:toUpper()).
-  wait 2.
+  wait 1.5.
 
   if ship:orbit:periapsis > 9000 {
-    // Calculate time to cross target crater longitude
+    // Calculate time to cross target crater longitude at high orbit (55km - max 1000x warp unlocked!)
     local targetLng is selectedCrater:geo:lng.
     local currentLng is ship:longitude.
     local diffLng is targetLng - currentLng.
@@ -124,18 +123,18 @@ if ship:body:name <> "Mun" {
     if relDegPerSec <= 0 { set relDegPerSec to 360 / orbPeriod. }
 
     local timeToTarget is diffLng / relDegPerSec.
-    local burnTime is time:seconds + timeToTarget - (orbPeriod / 2).
+    local burnTime is time:seconds + timeToTarget - (orbPeriod / 4).
 
     until burnTime > time:seconds + 30 {
       set burnTime to burnTime + (360 / relDegPerSec).
     }
 
-    local dvNeeded is hTrans(ship:altitude, 7000).
+    local dvNeeded is hTrans(ship:altitude, 5000).
     local deorbitNode is node(burnTime, 0, 0, dvNeeded).
     add deorbitNode.
     wait 0.1.
 
-    logChatter("CapCom", "Deorbit node planned to place periapsis over " + selectedCrater:name).
+    logChatter("CapCom", "High-altitude deorbit node planned over " + selectedCrater:name).
     exeMnv().
     wait 1.
   } else {
@@ -144,17 +143,12 @@ if ship:body:name <> "Mun" {
   playDescendScene().
 
   // -------------------------------------------
-  // STEP 2: Warp to periapsis
+  // STEP 2: Fast On-Rails Warp to Periapsis Landing Entry
   // -------------------------------------------
-  logChatter("CapCom", "Step 2: Warping to periapsis landing entry.").
+  logChatter("CapCom", "Step 2: Fast warp to periapsis landing entry over " + selectedCrater:name).
   set MAPVIEW to true.
-  wait 1.
 
-  // Align surface retrograde first to ensure we are aligned before warping
-  logChatter("Crew", "Aligning spacecraft to surface retrograde...").
   lock steering to srfretrograde.
-  wait until vAng(ship:facing:vector, srfretrograde:vector) < 5 or ETA:periapsis < 15.
-  logChatter("Crew", "Retrograde lock confirmed.").
 
   if ETA:periapsis > 20 {
     logChatter("CapCom", "Warping to periapsis landing entry...").
