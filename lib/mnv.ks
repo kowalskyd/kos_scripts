@@ -121,7 +121,7 @@ global function exeMnv {
 
     local margin is deltaTime.
     if margin = -1 {
-      set margin to max(20, min(60, ship:mass / 5)).
+      set margin to max(10, min(60, ship:mass / 5)).
     }
 
     // Lock steering to align BEFORE warping, ensuring massive ships are pre-aligned
@@ -273,7 +273,7 @@ global function exeMnv {
           wait 0.1.
         }
 
-        if myNode:deltav:mag > 1.0 {
+        if myNode:deltav:mag > 0.3 {
           applyGForceLimit().
         } else {
           local targetAcc is max(0.1, min(2.0, myNode:deltav:mag / 1.5)).
@@ -313,7 +313,7 @@ global function exeMnv {
       }
 
       // Freeze steering and limit thrust during final portion of the burn to prevent flips and wobble
-      if myNode:deltav:mag > 1.0 {
+      if myNode:deltav:mag > 0.6 {
         set mnvSteer to myNode:deltav.
       } else {
         if not thrustLimited {

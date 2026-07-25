@@ -220,7 +220,7 @@ if ship:body:name <> "Mun" {
     }
   }
 
-  local safetyMargin is 15.
+  local safetyMargin is 10.
   local lastChatTime is time:seconds.
 
   // Reset engine thrust limits for full suicide burn power

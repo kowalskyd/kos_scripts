@@ -46,10 +46,12 @@ if ship:status = "PRELAUNCH" or ship:status = "FLYING" or ship:orbit:periapsis <
   // 3. Warp to Mun SOI transition
   logChatter("CapCom", "Warping to Mun SOI transition.").
   set MAPVIEW to true.
-  warpto(time:seconds + ETA:transition + 120).
-  wait until kuniverse:timewarp:rate = 1.
-  set MAPVIEW to false.
+  if ETA:transition > 30 {
+    warpto(time:seconds + ETA:transition - 15).
+    wait until kuniverse:timewarp:rate = 1.
+  }
   wait until ship:body:name = "Mun".
+  set MAPVIEW to false.
   
   initScreen("mun_encounter").
   logChatter("CapCom", "Signal acquired. Entered Mun sphere of influence.").

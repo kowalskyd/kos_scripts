@@ -184,8 +184,10 @@ if ship:body:name <> "Mun" {
     logChatter("CapCom", "Step 3: Coasting out of Mun's sphere of influence...").
     lock steering to prograde.
     set MAPVIEW to true.
-    warpto(time:seconds + ETA:transition + 30).
-    wait until kuniverse:timewarp:rate = 1.
+    if ETA:transition > 30 {
+      warpto(time:seconds + ETA:transition - 15).
+      wait until kuniverse:timewarp:rate = 1.
+    }
     wait until ship:body:name = "Kerbin".
     set MAPVIEW to false.
     
@@ -220,19 +222,11 @@ if ship:body:name <> "Mun" {
   logChatter("CapCom", "Step 4: Warping to atmospheric interface.").
   
   lock steering to prograde.
-  if ETA:periapsis > 200 {
+  if ship:altitude > 75000 {
     set MAPVIEW to true.
-    warpto(time:seconds + ETA:periapsis - 200).
+    warpto(time:seconds + max(10, ETA:periapsis - 60)).
     wait until kuniverse:timewarp:rate = 1.
     set MAPVIEW to false.
-  }
-
-  logChatter("CapCom", "Approaching atmosphere. Warping to 100k altitude.").
-  if ship:altitude > 100000 {
-    set warp to 3.
-    wait until ship:altitude <= 100000.
-    set warp to 0.
-    wait until kuniverse:timewarp:rate = 1.
   }
 
   // -------------------------------------------
