@@ -80,30 +80,61 @@ if ship:body:name <> "Mun" {
   }
 
   // -------------------------------------------
-  // STEP 1: Deorbit - lower periapsis to ~7km
+  // STEP 1: Select Illuminated Flat Crater & Deorbit to 7km
   // -------------------------------------------
-  logChatter("CapCom", "Step 1: Commencing deorbit burn.").
+  logChatter("CapCom", "Step 1: Selecting illuminated flat crater basin.").
   wait 1.
 
-  if ship:orbit:periapsis > 9000 {
-    goToFrom(7000, "AP").
-    
-    // Check if the landing site of the planned node is in the dark
-    local myNode is nextNode.
-    local peTime is time:seconds + myNode:ETA + myNode:orbit:period / 2.
-    local moonToPe is positionat(ship, peTime) - body:position.
-    local sunVec is Sun:position - body:position.
-    
-    if vAng(sunVec, moonToPe) > 90 {
-      logChatter("CapCom", "WARNING: Planned landing site is in darkness. Delaying burn by half an orbit to land in sunlight.").
-      local newEta is myNode:ETA + myNode:orbit:period / 2.
-      local newDV is myNode:prograde.
-      remove myNode.
-      wait 0.1.
-      local newNode is node(time:seconds + newEta, 0, 0, newDV).
-      add newNode.
+  // Define flat equatorial crater basin candidates (smooth crater floors away from rims)
+  local craterCandidates is list(
+    lexicon("name", "East Crater Floor", "geo", latlng(0.0, 27.0)),
+    lexicon("name", "Equatorial Basin", "geo", latlng(0.0, 0.0)),
+    lexicon("name", "Fargodeep Basin", "geo", latlng(0.0, 159.0)),
+    lexicon("name", "Northwest Basin", "geo", latlng(0.0, -140.0))
+  ).
+
+  local selectedCrater is craterCandidates[0].
+  local sunVec is Sun:position - body:position.
+
+  // Pick first candidate crater floor in direct sunlight (< 85 degrees sun angle)
+  for c in craterCandidates {
+    local cPos is c:geo:position - body:position.
+    local sunAngle is vAng(sunVec, cPos).
+    if sunAngle <= 85 {
+      set selectedCrater to c.
+      break.
     }
-    
+  }
+
+  logChatter("CapCom", "Target Crater Selected: " + selectedCrater:name + " (Sunlight Illuminated)").
+  hudMsg("TARGET: " + selectedCrater:name:toUpper()).
+  wait 2.
+
+  if ship:orbit:periapsis > 9000 {
+    // Calculate time to cross target crater longitude
+    local targetLng is selectedCrater:geo:lng.
+    local currentLng is ship:longitude.
+    local diffLng is targetLng - currentLng.
+    until diffLng >= 0 { set diffLng to diffLng + 360. }
+
+    local orbPeriod is ship:orbit:period.
+    local rotPeriod is body:rotationperiod.
+    local relDegPerSec is (360 / orbPeriod) - (360 / rotPeriod).
+    if relDegPerSec <= 0 { set relDegPerSec to 360 / orbPeriod. }
+
+    local timeToTarget is diffLng / relDegPerSec.
+    local burnTime is time:seconds + timeToTarget - (orbPeriod / 2).
+
+    until burnTime > time:seconds + 30 {
+      set burnTime to burnTime + (360 / relDegPerSec).
+    }
+
+    local dvNeeded is hTrans(ship:altitude, 7000).
+    local deorbitNode is node(burnTime, 0, 0, dvNeeded).
+    add deorbitNode.
+    wait 0.1.
+
+    logChatter("CapCom", "Deorbit node planned to place periapsis over " + selectedCrater:name).
     exeMnv().
     wait 1.
   } else {
