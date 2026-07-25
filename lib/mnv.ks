@@ -127,7 +127,7 @@ global function exeMnv {
     // Lock steering to align BEFORE warping, ensuring massive ships are pre-aligned
     lock steering to myNode:deltav.
 
-    if myNode:ETA - burn_duration/2 - margin > 60 {
+    if myNode:ETA - burn_duration/2 - margin > 15 {
       if defined hudActive {
         logChatter("CapCom", "Aligning spacecraft with maneuver node...").
       } else {
