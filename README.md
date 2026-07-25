@@ -6,8 +6,17 @@ The **KAL-9000** suite provides end-to-end mission automation—from launchpad l
 
 ---
 
+## Video Demonstration
+
+[![KAL-9000 Mun Mission Demonstration](https://img.youtube.com/vi/YOUR_YOUTUBE_VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=YOUR_YOUTUBE_VIDEO_ID)
+
+*Watch the KAL-9000 automated flight software execute a full Mun mission from launch to surface landing and return.*
+
+---
+
 ## Table of Contents
 
+- [Video Demonstration](#video-demonstration)
 - [Overview & Key Capabilities](#overview--key-capabilities)
 - [System Architecture](#system-architecture)
 - [Core Mission Controllers](#core-mission-controllers)
@@ -66,9 +75,8 @@ Script/
 │   ├── rover.ks            # PID ground steering and waypoint guidance
 │   ├── system.ks           # Auto-deployer for fairings, antennas, solar panels
 │   └── transfer.ks         # Interplanetary ejection and phase calculation
-├── crafts/                 # KSP vessel definitions and metadata
-│   ├── Space Station 01.craft
-│   └── Transfer Capsule.craft
+├── crafts/                 # KSP vessel definitions
+│   └── Auto-Saved Ship.craft
 ├── launch.ks               # Orbital launch orchestrator
 ├── mun.ks / mun*.ks        # Mun mission suite (Launch, Land, Mission, Return)
 ├── minmus.ks / minmus*.ks  # Minmus mission suite (Launch, Land, Mission, Return)
@@ -108,7 +116,7 @@ Provides a terminal-based text GUI designed for 50x24 character displays:
 - **`updateLandingTelemetry(...)`**: Displays radar altitude ($AGL$), stop distance, throttle percentage, vertical/horizontal velocity, and a visual ASCII suicide burn gauge (`[████░░░░]`).
 - **`updateResources()`**: Displays Liquid Fuel, Oxidizer, Monopropellant, Electric Charge, crew count, and pilot name.
 - **`logChatter(sender, message)`**: Formats circular log chatter queue for mission comms.
-- **`runDiagnostics(labels)`**: Displays animated pre-flight check list with green checkmarks (`✔`).
+- **`runDiagnostics(labels)`**: Displays animated pre-flight check list with status indicators.
 
 ### Orbital Mechanics & Maneuvers ([`lib/mnv.ks`](file:///Users/danielkowalsky/Library/Application%20Support/Steam/steamapps/common/Kerbal%20Space%20Program/Ships/Script/lib/mnv.ks))
 
@@ -177,9 +185,8 @@ Vector cross/dot product helpers, angle normalization, and pitch/heading calcula
 
 ## Included Craft Specifications
 
-The repository includes pre-built vessel craft files configured with KAL-9000 tags:
-- **`Space Station 01`**: Modular orbital station equipped with standard docking ports and power arrays.
-- **`Transfer Capsule`**: Crewed transfer vessel optimized for lunar/orbital transport.
+The repository includes your active vessel configuration craft file:
+- **`Auto-Saved Ship`** ([`crafts/Auto-Saved Ship.craft`](file:///Users/danielkowalsky/Library/Application%20Support/Steam/steamapps/common/Kerbal%20Space%20Program/Ships/Script/crafts/Auto-Saved%20Ship.craft)): Primary vessel configured with KAL-9000 part tags (`fairing`, `antenna`) and staging layout for automated spaceflight operations.
 
 ---
 
@@ -189,7 +196,7 @@ The repository includes pre-built vessel craft files configured with KAL-9000 ta
    ```
    [KSP Root Directory]/Ships/Script/
    ```
-2. Open KSP and build a vessel equipped with a **kOS Processor** unit.
+2. Open KSP and load or build a vessel equipped with a **kOS Processor** unit.
 3. (Optional) In the VAB/SPH, right-click the kOS module and select a boot script (e.g. `launch_boot.ks`).
 4. Open the kOS terminal in-game and run desired commands:
    ```kerboscript
