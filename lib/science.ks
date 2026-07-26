@@ -4,7 +4,7 @@
 // Automatically deploys all operable science experiments,
 // collects and stores the data in the Experiment Storage Unit (ESU),
 // and resets reusable instruments (including Crew Reports).
-
+// 
 global collectScience is false.
 
 // Interactively prompts user at mission start to enable or disable science collection
