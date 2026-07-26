@@ -389,6 +389,9 @@ global function driveToCoordinates {
   // Check sunlight and EC before beginning drive
   waitForSunlight().
   waitForFullEC().
+  local minDistToTarget is latlng(targetLat, targetLng):distance.
+  local timeOfBestDist is time:seconds.
+  local detourCount is 0.
 
   if lastScienceBiome = "" {
     set lastScienceBiome to getCurrentBiome().
@@ -465,13 +468,33 @@ global function driveToCoordinates {
     local curSpeed is ship:groundspeed.
     local bearingTo is targetGeo:bearing. // relative angle to target (-180 to 180)
     
-    // Arrival condition
+    // Track closest approach distance to waypoint
+    if dist < (minDistToTarget - 5) {
+      set minDistToTarget to dist.
+      set timeOfBestDist to time:seconds.
+    }
+
+    // Arrival Condition 1: Direct reach (dist < arrivalRadius)
     if dist < arrivalRadius {
       brakes on.
       set targetThrottle to 0.
       unlock wheelsteering.
       unlock wheelthrottle.
       hudText("Arrived at waypoint!", 3, 2, 20, rgb(0.2, 0.8, 0.2), false).
+      break.
+    }
+    
+    // Arrival Condition 2: Best-Approach Acceptance (Inaccessible Waypoint)
+    // If target sits in a crater/cliff and we cannot get closer than ~250m after 40s or 3 detours
+    local timeStagnant is time:seconds - timeOfBestDist.
+    if (dist < 300 or minDistToTarget < 300) and (timeStagnant > 40 or detourCount >= 3) {
+      brakes on.
+      set targetThrottle to 0.
+      unlock wheelsteering.
+      unlock wheelthrottle.
+      hudText("WAYPOINT INACCESSIBLE (Best Approach: " + round(minDistToTarget, 1) + "m). Gathering science here!", 5, 2, 25, rgb(0.2, 1.0, 0.4), false).
+      wait until ship:groundspeed < 0.2.
+      runScienceExperiments().
       break.
     }
     
@@ -499,8 +522,17 @@ global function driveToCoordinates {
 
     // Detect steep climb (>12 deg) or steep drop-off/cliff (< -10 deg) or > 8m height jump 100m ahead
     if aheadSlope > 12 or aheadSlope < -10 or abs(hDiff) > 8 {
-      hudText("OBSTACLE 100M AHEAD (Slope " + round(aheadSlope, 1) + " deg)! Probing 30-deg detour...", 4, 2, 25, rgb(1, 0.5, 0.0), false).
+      set detourCount to detourCount + 1.
+      hudText("OBSTACLE 100M AHEAD (Slope " + round(aheadSlope, 1) + " deg)! Full stop for 30-deg detour...", 4, 2, 25, rgb(1, 0.5, 0.0), false).
       
+      // FULL STOP BRAKING before executing detour turn
+      brakes on.
+      set targetThrottle to 0.
+      unlock wheelsteering.
+      unlock wheelthrottle.
+      wait until ship:groundspeed < 0.2.
+      wait 0.5.
+
       // Probe Left (-30 deg) and Right (+30 deg) slope alternatives 100m ahead
       local scanRight is scanSlopeAhead(30, 100).
       local scanLeft is scanSlopeAhead(-30, 100).
@@ -522,8 +554,6 @@ global function driveToCoordinates {
 
       // Execute 90-meter detour leg in chosen direction
       brakes off.
-      unlock wheelsteering.
-      unlock wheelthrottle.
       local detourThrottle is 0.
       lock wheelsteering to detourGeo.
       lock wheelthrottle to detourThrottle.
@@ -532,7 +562,7 @@ global function driveToCoordinates {
       until (time:seconds - legStart > 18) or (detourGeo:distance < 15) {
         if not (ship:status = "LANDED") { handleAirborne(). }
         local curSpd is ship:groundspeed.
-        if curSpd < 5.0 {
+        if curSpd < 4.5 {
           set detourThrottle to 0.4.
         } else {
           set detourThrottle to 0.
