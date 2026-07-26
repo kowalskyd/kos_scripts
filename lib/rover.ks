@@ -64,6 +64,22 @@ global function getECInfo {
   return list(curEC, maxEC).
 }
 
+// Long-Range Terrain Radar: Scans slope and elevation delta at specified distance and angle offset
+global function scanSlopeAhead {
+  parameter angleOffset is 0. // Offset angle in degrees relative to current heading
+  parameter lookDist is 100.   // Lookahead distance in meters
+
+  local currentGeo is ship:geoposition.
+  local testHeading is mod(ship:heading + angleOffset + 360, 360).
+  local testDirVec is heading(testHeading, 0):vector.
+  
+  local aheadGeoPos is ship:body:geopositionof(ship:position + testDirVec * lookDist).
+  local hDiff is aheadGeoPos:terrainheight - currentGeo:terrainheight.
+  local aheadSlope is arctan2(hDiff, lookDist).
+  
+  return list(aheadSlope, hDiff, aheadGeoPos).
+}
+
 // Toggles vessel-wide hibernation mode (probe core hibernation, torque cutoff, wheel motor cutoff, light dimming)
 global function setHibernation {
   parameter enable.
@@ -476,17 +492,60 @@ global function driveToCoordinates {
       brakes off.
     }
 
-    // Proactive Terrain Lookahead Scanner (30 meters ahead of facing)
-    local lookDist is max(15, curSpeed * 3.5).
-    local currentGeoPos is ship:geoposition.
-    local aheadGeoPos is ship:body:geopositionof(ship:position + ship:facing:forevector * lookDist).
-    local hDiff is aheadGeoPos:terrainheight - currentGeoPos:terrainheight.
-    local aheadSlope is arctan2(hDiff, lookDist).
+    // Long-Range 100-Meter Raycast Terrain Scanner
+    local scanCenter is scanSlopeAhead(0, 100).
+    local aheadSlope is scanCenter[0].
+    local hDiff is scanCenter[1].
 
-    // Cliff / Drop-off / Steep Ridge Ahead Protection: Trigger Detour
-    if aheadSlope < -14 or hDiff < -5 {
-      executeRidgeDetour().
+    // Detect steep climb (>12 deg) or steep drop-off/cliff (< -10 deg) or > 8m height jump 100m ahead
+    if aheadSlope > 12 or aheadSlope < -10 or abs(hDiff) > 8 {
+      hudText("OBSTACLE 100M AHEAD (Slope " + round(aheadSlope, 1) + " deg)! Probing 30-deg detour...", 4, 2, 25, rgb(1, 0.5, 0.0), false).
+      
+      // Probe Left (-30 deg) and Right (+30 deg) slope alternatives 100m ahead
+      local scanRight is scanSlopeAhead(30, 100).
+      local scanLeft is scanSlopeAhead(-30, 100).
+      
+      local absSlopeRight is abs(scanRight[0]).
+      local absSlopeLeft is abs(scanLeft[0]).
+
+      // Pick flatter side for detour
+      local detourOffset is 30.
+      if absSlopeLeft < absSlopeRight {
+        set detourOffset to -30.
+      }
+
+      local detourHDG is mod(ship:heading + detourOffset + 360, 360).
+      local detourDirVec is heading(detourHDG, 0):vector.
+      local detourGeo is ship:body:geopositionof(ship:position + detourDirVec * 90).
+
+      hudText("Steering " + round(detourOffset) + " deg detour around obstacle for 90m...", 3, 2, 20, rgb(0.2, 0.8, 1.0), false).
+
+      // Execute 90-meter detour leg in chosen direction
       brakes off.
+      unlock wheelsteering.
+      unlock wheelthrottle.
+      local detourThrottle is 0.
+      lock wheelsteering to detourGeo.
+      lock wheelthrottle to detourThrottle.
+
+      local legStart is time:seconds.
+      until (time:seconds - legStart > 18) or (detourGeo:distance < 15) {
+        if not (ship:status = "LANDED") { handleAirborne(). }
+        local curSpd is ship:groundspeed.
+        if curSpd < 5.0 {
+          set detourThrottle to 0.4.
+        } else {
+          set detourThrottle to 0.
+        }
+        wait 0.1.
+      }
+
+      brakes on.
+      set targetThrottle to 0.
+      wait 0.5.
+      brakes off.
+
+      hudText("Detour leg complete. Re-probing target path...", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
       lock wheelsteering to targetGeo.
       lock wheelthrottle to targetThrottle.
     }
@@ -528,7 +587,7 @@ global function driveToCoordinates {
     print "Biome:      " + padRight(currentBiome, 30) at (0, 8).
     print "Distance:   " + padRight(round(dist, 1) + " m", 30) at (0, 9).
     print "Speed:      " + padRight(round(curSpeed, 1) + " / " + round(safeSpeed, 1) + " m/s", 30) at (0, 10).
-    print "Ahead Slope:" + padRight(round(aheadSlope, 1) + " deg", 30) at (0, 11).
+    print "100m Slope: " + padRight(round(aheadSlope, 1) + " deg", 30) at (0, 11).
     print "Pitch/Tilt: " + padRight(round(currentPitch, 1) + " / " + round(currentTilt, 1), 30) at (0, 12).
     print "E.Charge:   " + padRight(round(ecCur) + "/" + round(ecMax) + " (" + ecPct + "%)", 30) at (0, 13).
     
