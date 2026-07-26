@@ -64,17 +64,21 @@ global function getECInfo {
   return list(curEC, maxEC).
 }
 
-// Toggles vessel-wide hibernation mode (probe core hibernation, torque cutoff, light dimming)
+// Toggles vessel-wide hibernation mode (probe core hibernation, torque cutoff, wheel motor cutoff, light dimming)
 global function setHibernation {
   parameter enable.
   
   if enable {
-    hudText("NIGHT MODE: Hibernating probe core & disabling torque...", 4, 2, 25, rgb(0.8, 0.4, 1.0), false).
+    hudText("HIBERNATION: Powering down probe core, torque & wheel motors...", 4, 2, 25, rgb(0.8, 0.4, 1.0), false).
     lights off.
     sas off.
     brakes on.
     
-    // Disable reaction wheels & hibernate probe cores
+    // Unlock steering & throttle so wheel motors release power draw
+    unlock wheelsteering.
+    unlock wheelthrottle.
+    set ship:control:pilotmainthrottle to 0.
+
     for p in ship:parts {
       if p:hasmodule("ModuleReactionWheel") {
         local rw is p:getModule("ModuleReactionWheel").
@@ -89,6 +93,13 @@ global function setHibernation {
           cmd:setField("hibernate", true).
         } else if cmd:hasfield("hibernation") {
           cmd:setField("hibernation", true).
+        }
+      }
+
+      if p:hasmodule("ModuleWheelMotor") {
+        local m is p:getModule("ModuleWheelMotor").
+        if m:hasevent("disable motor") {
+          m:doEvent("disable motor").
         }
       }
     }
@@ -110,11 +121,18 @@ global function setHibernation {
           rw:setField("wheel state", "Normal").
         }
       }
+
+      if p:hasmodule("ModuleWheelMotor") {
+        local m is p:getModule("ModuleWheelMotor").
+        if m:hasevent("enable motor") {
+          m:doEvent("enable motor").
+        }
+      }
     }
     
     sas on.
     lights on.
-    hudText("SUNRISE DETECTED: Waking systems from hibernation!", 4, 2, 20, rgb(0.2, 1.0, 0.4), false).
+    hudText("Waking systems from hibernation!", 4, 2, 20, rgb(0.2, 1.0, 0.4), false).
   }
 }
 
@@ -175,6 +193,8 @@ global function waitForSunlight {
     hudText("NIGHTTIME DETECTED: Suspending movement & entering hibernation...", 5, 2, 25, rgb(1, 0.5, 0.0), false).
     brakes on.
     set targetThrottle to 0.
+    unlock wheelsteering.
+    unlock wheelthrottle.
     wait until ship:groundspeed < 0.05. // Ensure rover is completely stationary before timewarp
 
     // Engage vessel-wide hibernation mode
@@ -221,7 +241,7 @@ global function waitForSunlight {
   }
 }
 
-// Waits until Electric Charge (EC) is fully recharged (>= 98%) with automatic timewarp
+// Waits until Electric Charge (EC) is fully recharged (>= 98%) with zero-power hibernation & automatic timewarp
 global function waitForFullEC {
   local ecData is getECInfo().
   local curEC is ecData[0].
@@ -233,17 +253,22 @@ global function waitForFullEC {
     hudText("Charging batteries (High-Speed Auto-Warp)...", 4, 2, 20, rgb(1, 0.8, 0.2), false).
     brakes on.
     set targetThrottle to 0.
+    unlock wheelsteering.
+    unlock wheelthrottle.
     wait until ship:groundspeed < 0.05.
 
     if not isSunUp() {
       waitForSunlight().
     }
 
+    // Engage zero-power hibernation mode during battery charging
+    setHibernation(true).
+
     set kuniverse:timewarp:mode to "RAILS".
     wait 0.2.
 
     if kuniverse:timewarp:issettled {
-      set kuniverse:timewarp:warp to 4.
+      set kuniverse:timewarp:warp to 4. // 100x high-speed warp
     }
 
     until false {
@@ -258,7 +283,9 @@ global function waitForFullEC {
       if not isSunUp() {
         set kuniverse:timewarp:rate to 1.
         wait until kuniverse:timewarp:rate = 1.
+        setHibernation(false).
         waitForSunlight().
+        setHibernation(true).
       }
 
       if kuniverse:timewarp:issettled and kuniverse:timewarp:warp < 4 {
@@ -268,7 +295,7 @@ global function waitForFullEC {
       local ecPct is 100.
       if maxEC > 0 { set ecPct to round((curEC / maxEC) * 100). }
 
-      print "--- Charging Batteries (Auto-Warp) ---" at (0, 7).
+      print "--- Charging Batteries (Hibernation Active) ---" at (0, 7).
       print "E.Charge:   " + padRight(round(curEC) + "/" + round(maxEC) + " (" + ecPct + "%)", 30) at (0, 8).
       print "                                                                " at (0, 9).
       wait 0.2.
@@ -277,6 +304,11 @@ global function waitForFullEC {
     set kuniverse:timewarp:rate to 1.
     wait until kuniverse:timewarp:rate = 1.
 
+    // Wake up from hibernation
+    setHibernation(false).
+
+    print "                                                                " at (0, 7).
+    print "                                                                " at (0, 8).
     hudText("Batteries fully charged!", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
   }
 }
@@ -314,6 +346,20 @@ global function driveToCoordinates {
     // Check for airborne jumps / launches
     if not (ship:status = "LANDED" or ship:status = "SPLASHED") {
       handleAirborne().
+      brakes off.
+      lock wheelsteering to targetGeo.
+      lock wheelthrottle to targetThrottle.
+    }
+
+    // Low battery (15%) emergency check during driving
+    local ecCheck is getECInfo().
+    if ecCheck[1] > 0 and (ecCheck[0] / ecCheck[1]) < 0.15 {
+      hudText("LOW BATTERY (15%): Pausing drive to recharge...", 4, 2, 20, rgb(1, 0.5, 0.0), false).
+      brakes on.
+      set targetThrottle to 0.
+      unlock wheelsteering.
+      unlock wheelthrottle.
+      waitForFullEC().
       brakes off.
       lock wheelsteering to targetGeo.
       lock wheelthrottle to targetThrottle.
