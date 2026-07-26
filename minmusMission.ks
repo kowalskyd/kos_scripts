@@ -9,6 +9,8 @@
 //   5. minmusReturn.ks (ejection, coast, reentry preparation, reentry, parachutes)
 
 runOncePath("0:/lib/diagnostics.ks").
+runOncePath("0:/lib/science.ks").
+
 if not runPreFlightChecks() {
   clearScreen.
   print "=======================================".
@@ -20,26 +22,33 @@ if not runPreFlightChecks() {
   print "=======================================".
   print "   AUTOMATED MINMUS MISSION ACTIVATED  ".
   print "=======================================".
-  wait 2.
+  promptScienceOption().
 
   print "Step 1: Launching to Kerbin Orbit...".
   runPath("0:/launch").
-  wait 5.
+  wait 2.
+  doScience("Low Kerbin Orbit").
 
   print "Step 2: Transferring to Minmus Orbit...".
   runPath("0:/minmus.ks").
-  wait 5.
+  wait 2.
+  doScience("Low Minmus Orbit").
 
   print "Step 3: Performing Minmus Landing...".
   runPath("0:/minmusLand.ks").
-  wait 5.
+  wait 2.
+  doScience("Minmus Surface").
+  promptSurfaceEVAPause("Minmus").
 
   print "Step 4: Launching from Minmus to Orbit...".
   runPath("0:/minmusLaunch.ks").
-  wait 5.
+  wait 2.
+  doScience("Minmus Orbit Liftoff").
 
   print "Step 5: Returning to Kerbin...".
   runPath("0:/minmusReturn.ks").
+  wait 2.
+  doScience("Trans-Kerbin Return").
 
   print "=======================================".
   print "   AUTOMATED MINMUS MISSION COMPLETED! ".

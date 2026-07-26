@@ -9,6 +9,8 @@
 //   5. munReturn.ks (ejection, coast, reentry preparation, reentry, parachutes)
 
 runOncePath("0:/lib/diagnostics.ks").
+runOncePath("0:/lib/science.ks").
+
 if not runPreFlightChecks() {
   clearScreen.
   
@@ -21,26 +23,33 @@ if not runPreFlightChecks() {
   print "=======================================".
   print "    AUTOMATED MUN MISSION ACTIVATED    ".
   print "=======================================".
-  wait 2.
+  promptScienceOption().
 
   print "Step 1: Launching to Kerbin Orbit...".
   runPath("0:/launch").
   wait 1.
+  doScience("Low Kerbin Orbit").
 
   print "Step 2: Transferring to Mun Orbit...".
   runPath("0:/mun.ks").
   wait 1.
+  doScience("Low Mun Orbit").
 
   print "Step 3: Performing Mun Landing...".
   runPath("0:/munLand.ks").
   wait 1.
+  doScience("Mun Surface").
+  promptSurfaceEVAPause("Mun").
 
   print "Step 4: Launching from Mun to Orbit...".
   runPath("0:/munLaunch.ks").
   wait 1.
+  doScience("Mun Orbit Liftoff").
 
   print "Step 5: Returning to Kerbin...".
   runPath("0:/munReturn.ks").
+  wait 1.
+  doScience("Trans-Kerbin Return").
 
   print "=======================================".
   print "    AUTOMATED MUN MISSION COMPLETED!   ".

@@ -128,7 +128,14 @@ global function runScienceExperiments {
   local containerList is ship:modulesNamed("ModuleScienceContainer").
   if containerList:length > 0 {
     print "Collecting data to science container..." at (0, 12).
-    containerList[0]:doEvent("collect all").
+    local container is containerList[0].
+    if container:hasaction("collect all") {
+      container:doAction("collect all", true).
+    } else if container:hasevent("collect all") {
+      container:doEvent("collect all").
+    } else if container:hasevent("container: collect all") {
+      container:doEvent("container: collect all").
+    }
     wait 1.0.
     print "                                        " at (0, 12).
   }

@@ -13,10 +13,10 @@ global function transferToBody {
   local synodicPeriod is (ship:orbit:period * target:orbit:period) / (target:orbit:period - ship:orbit:period).
   local deltaTime is travelAngle * synodicPeriod / 360.
 
-  if deltaTime > 45 {
+  if deltaTime > 60 {
     logChatter("CapCom", "Warping to transfer window...").
     set MAPVIEW to true.
-    warpto(time:seconds + deltaTime - 30).
+    warpto(time:seconds + deltaTime - 50).
     wait until kuniverse:timewarp:rate = 1.
     set MAPVIEW to false.
     wait 0.5. // Allow physics to settle

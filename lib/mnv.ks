@@ -120,7 +120,7 @@ global function exeMnv {
     set burn_duration to myNode:deltav:mag/max_acc.
 
     local wasMap is MAPVIEW.
-    local leadTime is max(10, burn_duration / 2 + 12).
+    local leadTime is max(20, burn_duration / 2 + 24).
     if myNode:ETA > leadTime + 5 {
       set MAPVIEW to true.
       kuniverse:timewarp:warpto(time:seconds + myNode:ETA - leadTime).
