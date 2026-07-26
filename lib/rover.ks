@@ -550,29 +550,32 @@ global function driveToCoordinates {
       lock wheelthrottle to targetThrottle.
     }
 
-    // Dynamic Terrain-Adaptive Speed Controller
+    // Dynamic Pre-Turn Deceleration & Speed Governor
     local safeSpeed is maxSpeed.
+
+    if abs(bearingTo) > 35 {
+      set safeSpeed to min(safeSpeed, 2.5). // Tight cornering speed limit (2.5 m/s)
+    } else if abs(bearingTo) > 12 {
+      set safeSpeed to min(safeSpeed, 3.5). // Moderate cornering speed limit (3.5 m/s)
+    }
 
     if aheadSlope > 18 or hDiff > 6 {
       set safeSpeed to min(safeSpeed, 3.5). // Hill crest speed limit
-    }
-
-    if abs(bearingTo) > 40 {
-      set safeSpeed to min(safeSpeed, 3.5). // Sharp cornering speed
-    } else if abs(bearingTo) > 15 {
-      set safeSpeed to min(safeSpeed, 5.0). // Moderate cornering speed
     }
 
     if abs(currentPitch) > 10 or currentTilt > 10 {
       set safeSpeed to min(safeSpeed, 4.0). // Slope speed limit
     }
     
-    // Throttle logic (Never apply throttle if brakes are on)
-    if brakes {
+    // Pre-Turn Active Deceleration: Tap brakes if approaching a turn at high speed
+    if abs(bearingTo) > 12 and curSpeed > (safeSpeed + 0.8) {
+      brakes on.
       set targetThrottle to 0.
     } else if curSpeed < safeSpeed {
+      brakes off.
       set targetThrottle to min(1.0, (safeSpeed - curSpeed) * 0.5 + 0.2).
     } else {
+      brakes off.
       set targetThrottle to 0.
     }
     
