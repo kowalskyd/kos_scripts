@@ -64,6 +64,60 @@ global function getECInfo {
   return list(curEC, maxEC).
 }
 
+// Toggles vessel-wide hibernation mode (probe core hibernation, torque cutoff, light dimming)
+global function setHibernation {
+  parameter enable.
+  
+  if enable {
+    hudText("NIGHT MODE: Hibernating probe core & disabling torque...", 4, 2, 25, rgb(0.8, 0.4, 1.0), false).
+    lights off.
+    sas off.
+    brakes on.
+    
+    // Disable reaction wheels & hibernate probe cores
+    for p in ship:parts {
+      if p:hasmodule("ModuleReactionWheel") {
+        local rw is p:getModule("ModuleReactionWheel").
+        if rw:hasevent("toggle wheel state") {
+          rw:setField("wheel state", "Disabled").
+        }
+      }
+      
+      if p:hasmodule("ModuleCommand") {
+        local cmd is p:getModule("ModuleCommand").
+        if cmd:hasfield("hibernate") {
+          cmd:setField("hibernate", true).
+        } else if cmd:hasfield("hibernation") {
+          cmd:setField("hibernation", true).
+        }
+      }
+    }
+  } else {
+    // Wake up systems from hibernation
+    for p in ship:parts {
+      if p:hasmodule("ModuleCommand") {
+        local cmd is p:getModule("ModuleCommand").
+        if cmd:hasfield("hibernate") {
+          cmd:setField("hibernate", false).
+        } else if cmd:hasfield("hibernation") {
+          cmd:setField("hibernation", false).
+        }
+      }
+      
+      if p:hasmodule("ModuleReactionWheel") {
+        local rw is p:getModule("ModuleReactionWheel").
+        if rw:hasevent("toggle wheel state") {
+          rw:setField("wheel state", "Normal").
+        }
+      }
+    }
+    
+    sas on.
+    lights on.
+    hudText("SUNRISE DETECTED: Waking systems from hibernation!", 4, 2, 20, rgb(0.2, 1.0, 0.4), false).
+  }
+}
+
 // Auto-upright recovery if rover flips or tumbles onto its roof
 global function recoverFromFlip {
   local currentTilt is vAng(ship:up:vector, ship:facing:topvector).
@@ -115,13 +169,16 @@ global function handleAirborne {
   }
 }
 
-// Suspends movement and operations when the sun is down with automatic high-speed timewarp
+// Suspends movement and operations when the sun is down with automatic high-speed timewarp and vessel hibernation
 global function waitForSunlight {
   if not isSunUp() {
-    hudText("NIGHTTIME DETECTED: Suspending movement & warping to sunrise...", 5, 2, 25, rgb(1, 0.5, 0.0), false).
+    hudText("NIGHTTIME DETECTED: Suspending movement & entering hibernation...", 5, 2, 25, rgb(1, 0.5, 0.0), false).
     brakes on.
     set targetThrottle to 0.
     wait until ship:groundspeed < 0.05. // Ensure rover is completely stationary before timewarp
+
+    // Engage vessel-wide hibernation mode
+    setHibernation(true).
 
     // Switch to RAILS timewarp for high-speed warp across the night
     set kuniverse:timewarp:mode to "RAILS".
@@ -145,7 +202,7 @@ global function waitForSunlight {
       local ecPct is 100.
       if ecData[1] > 0 { set ecPct to round((ecData[0] / ecData[1]) * 100). }
 
-      print "--- Night Mode (Auto-Warp Active) ---" at (0, 7).
+      print "--- Night Mode (Hibernation & Auto-Warp Active) ---" at (0, 7).
       print "Sun Angle:  " + padRight(sunAngle + " deg (Waiting < 89)", 30) at (0, 8).
       print "E.Charge:   " + padRight(round(ecData[0]) + "/" + round(ecData[1]) + " (" + ecPct + "%)", 30) at (0, 9).
       print "                                                                " at (0, 10).
@@ -155,10 +212,12 @@ global function waitForSunlight {
     set kuniverse:timewarp:rate to 1.
     wait until kuniverse:timewarp:rate = 1.
     
+    // Restore systems from hibernation
+    setHibernation(false).
+
     print "                                                                " at (0, 7).
     print "                                                                " at (0, 8).
     print "                                                                " at (0, 9).
-    hudText("SUNRISE DETECTED: Resuming operations!", 4, 2, 20, rgb(0.2, 1.0, 0.4), false).
   }
 }
 
