@@ -237,7 +237,7 @@ global function executeRidgeDetour {
   hudText("Detour complete: Resuming waypoint navigation.", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
 }
 
-// Suspends movement and operations when the sun is down with automatic high-speed timewarp and vessel hibernation
+// Suspends movement and operations when the sun is down with high-speed timewarp and vessel hibernation
 global function waitForSunlight {
   if not isSunUp() {
     hudText("NIGHTTIME DETECTED: Suspending movement & entering hibernation...", 5, 2, 25, rgb(1, 0.5, 0.0), false).
@@ -258,15 +258,9 @@ global function waitForSunlight {
       local ecData is getECInfo().
       local sunAngle is round(vAng(body("Sun"):position, ship:up:vector), 1).
 
-      local targetWarp is 5.
-      if sunAngle < 92 {
-        set targetWarp to 1.
-      } else if sunAngle < 105 {
-        set targetWarp to 3.
-      }
-
-      if kuniverse:timewarp:issettled and kuniverse:timewarp:warp <> targetWarp {
-        set kuniverse:timewarp:warp to targetWarp.
+      // Maintain full 1,000x high-speed warp right up until sunrise
+      if kuniverse:timewarp:issettled and kuniverse:timewarp:warp <> 5 {
+        set kuniverse:timewarp:warp to 5.
       }
 
       local ecPct is 100.
@@ -317,10 +311,6 @@ global function waitForFullEC {
     set kuniverse:timewarp:mode to "RAILS".
     wait 0.2.
 
-    if kuniverse:timewarp:issettled {
-      set kuniverse:timewarp:warp to 4. // 100x high-speed warp
-    }
-
     until false {
       set ecData to getECInfo().
       set curEC to ecData[0].
@@ -338,7 +328,8 @@ global function waitForFullEC {
         setHibernation(true).
       }
 
-      if kuniverse:timewarp:issettled and kuniverse:timewarp:warp < 4 {
+      // Maintain high-speed warp 4 right up until full charge
+      if kuniverse:timewarp:issettled and kuniverse:timewarp:warp <> 4 {
         set kuniverse:timewarp:warp to 4.
       }
 
@@ -360,6 +351,53 @@ global function waitForFullEC {
     print "                                                                " at (0, 7).
     print "                                                                " at (0, 8).
     hudText("Batteries fully charged!", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
+  }
+}
+
+// Warps until radio link / comms signal with Kerbin is acquired if vessel is in comms shadow
+global function waitForCommsSignal {
+  if not ship:connection:isconnected {
+    hudText("NO COMMS LINK (Kerbin Occluded): Warping for signal...", 4, 2, 25, rgb(1, 0.5, 0.0), false).
+    brakes on.
+    set targetThrottle to 0.
+    unlock wheelsteering.
+    unlock wheelthrottle.
+    wait until ship:groundspeed < 0.05.
+
+    setHibernation(true).
+
+    set kuniverse:timewarp:mode to "RAILS".
+    wait 0.2.
+
+    local warpStart is time:seconds.
+    until ship:connection:isconnected {
+      // Timeout safety check (120 seconds of real-time warp)
+      if (time:seconds - warpStart) > 120 {
+        hudText("Comms window timeout: Storing science on ESU for later transmission.", 4, 2, 20, rgb(1, 0.6, 0.0), false).
+        break.
+      }
+
+      // Maintain high-speed warp 4 right up until signal re-acquisition
+      if kuniverse:timewarp:issettled and kuniverse:timewarp:warp <> 4 {
+        set kuniverse:timewarp:warp to 4.
+      }
+
+      print "--- Waiting for Comms Relay (Auto-Warp) ---" at (0, 7).
+      print "Status:     OUT OF RANGE / OCCLUDED      " at (0, 8).
+      print "                                                                " at (0, 9).
+      wait 0.2.
+    }
+
+    set kuniverse:timewarp:rate to 1.
+    wait until kuniverse:timewarp:rate = 1.
+    setHibernation(false).
+
+    print "                                                                " at (0, 7).
+    print "                                                                " at (0, 8).
+    
+    if ship:connection:isconnected {
+      hudText("COMMS LINK ACQUIRED! Radio link online.", 4, 2, 20, rgb(0.2, 1.0, 0.4), false).
+    }
   }
 }
 
@@ -541,6 +579,11 @@ global function runScienceExperiments {
   waitForSunlight().
   waitForFullEC().
 
+  // Check comms link with Kerbin; if occluded on back side of moon, warp for signal
+  if not ship:connection:isconnected {
+    waitForCommsSignal().
+  }
+
   set lastScienceBiome to getCurrentBiome().
 
   hudText("Deploying science suite (" + lastScienceBiome + ")...", 3, 2, 20, rgb(0.2, 0.6, 1.0), false).
@@ -574,7 +617,7 @@ global function runScienceExperiments {
       wait until exp:hasdata or (time:seconds - startWait > 6).
     }
     
-    // Transmit if connected, otherwise leave it stored on the sensor
+    // Transmit if connected, otherwise leave it stored on the sensor/ESU
     if exp:hasdata {
       if ship:connection:isconnected {
         exp:transmit().
