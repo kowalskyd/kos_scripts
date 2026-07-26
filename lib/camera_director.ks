@@ -140,7 +140,7 @@ if hasCameraAddon {
             if cut:haskey("groundOffset") { set maxD to 500. }
             
             if d > maxD { set d to maxD. }
-            if d < 5 { set d to 5. }
+            if d < 3.5 { set d to 3.5. }
             if p < -85 { set p to -85. }
             if p > 85 { set p to 85. }
             
@@ -169,11 +169,11 @@ if hasCameraAddon {
       if not MAPVIEW and kuniverse:timewarp:rate = 1 {
         set addons:camera:flightcamera:heading to addons:camera:flightcamera:heading + 0.03.
         
-        // Keep pitch and distance within a cinematic sweet spot
-        if addons:camera:flightcamera:pitch < 12 { set addons:camera:flightcamera:pitch to 12. }
+        // Keep pitch and distance within a cinematic sweet spot (with close-up capability)
+        if addons:camera:flightcamera:pitch < 8 { set addons:camera:flightcamera:pitch to 8. }
         if addons:camera:flightcamera:pitch > 35 { set addons:camera:flightcamera:pitch to 35. }
-        if addons:camera:flightcamera:distance > 100 { set addons:camera:flightcamera:distance to 100. }
-        if addons:camera:flightcamera:distance < 25 { set addons:camera:flightcamera:distance to 25. }
+        if addons:camera:flightcamera:distance > 80 { set addons:camera:flightcamera:distance to 80. }
+        if addons:camera:flightcamera:distance < 6 { set addons:camera:flightcamera:distance to 6. }
       }
     }
     preserve.
@@ -228,7 +228,7 @@ global function playLaunchScene {
   local sunH is getSunHeading().
   
   startCameraScene(list(
-    lexicon("duration", duration, "startH", sunH + 140, "endH", sunH + 110, "startP", 12, "endP", 8, "startD", 35, "endD", 45)
+    lexicon("duration", duration, "startH", sunH + 140, "endH", sunH + 110, "startP", 10, "endP", 6, "startD", 12, "endD", 35)
   )).
   set stagingCutsEnabled to false.
 }
@@ -240,7 +240,7 @@ global function playLiftoffScene {
     set duration to 30.
   }
   local sunH is getSunHeading().
-  local camOffset is heading(sunH + 120, 2):vector * 45.
+  local camOffset is heading(sunH + 120, 2):vector * 35.
   
   startCameraScene(list(
     lexicon("duration", duration, "groundOffset", camOffset)
@@ -257,7 +257,7 @@ global function playLiftoffClimbScene {
   local sunH is getSunHeading().
   
   startCameraScene(list(
-    lexicon("duration", duration, "startH", sunH - 30, "endH", sunH - 50, "startP", 8, "endP", 15, "startD", 30, "endD", 50)
+    lexicon("duration", duration, "startH", sunH - 30, "endH", sunH - 50, "startP", 6, "endP", 18, "startD", 14, "endD", 45)
   )).
   set stagingCutsEnabled to false.
 }
@@ -270,12 +270,12 @@ global function playAscendScene {
   local sunH is getSunHeading().
   
   startCameraScene(list(
-    lexicon("duration", duration * 0.4, "startH", sunH - 90, "endH", sunH + 10, "startP", 35, "endP", 22, "startD", 40, "endD", 55),
-    lexicon("duration", duration * 0.6, "startH", sunH - 190, "endH", sunH - 10, "startP", 22, "endP", 12, "startD", 55, "endD", 85)
+    lexicon("duration", duration * 0.3, "startH", sunH - 90, "endH", sunH - 10, "startP", 12, "endP", 24, "startD", 16, "endD", 35),
+    lexicon("duration", duration * 0.7, "startH", sunH - 190, "endH", sunH - 10, "startP", 22, "endP", 12, "startD", 35, "endD", 85)
   )).
 }
 
-// Scene 3: Orbiting Scene (Ultra-slow cinematic planetary orbit pan - alternating subtle sweeps)
+// Scene 3: Orbiting Scene (Ultra-slow cinematic planetary orbit pan - tight close-ups & wide vistas)
 global function playOrbitScene {
   parameter duration is -1.
   if not hasCameraAddon { return. }
@@ -283,8 +283,8 @@ global function playOrbitScene {
   local sunH is getSunHeading().
   
   startCameraScene(list(
-    lexicon("duration", duration * 0.6, "startH", sunH - 30, "endH", sunH + 30, "startP", 25, "endP", 16, "startD", 35, "endD", 50),
-    lexicon("duration", duration * 0.4, "startH", sunH + 40, "endH", sunH - 10, "startP", 40, "endP", 25, "startD", 50, "endD", 40)
+    lexicon("duration", duration * 0.4, "startH", sunH - 45, "endH", sunH + 15, "startP", 12, "endP", 18, "startD", 12, "endD", 28),
+    lexicon("duration", duration * 0.6, "startH", sunH + 40, "endH", sunH - 10, "startP", 35, "endP", 20, "startD", 45, "endD", 30)
   )).
 }
 
@@ -296,7 +296,8 @@ global function playAlignScene {
   local shipH is getShipHeading().
   
   startCameraScene(list(
-    lexicon("duration", duration, "startH", shipH - 25, "endH", shipH + 25, "startP", 18, "endP", 24, "startD", 25, "endD", 35)
+    lexicon("duration", duration * 0.5, "startH", shipH - 45, "endH", shipH + 15, "startP", 12, "endP", 20, "startD", 8.0, "endD", 16.0),
+    lexicon("duration", duration * 0.5, "startH", shipH + 30, "endH", shipH - 30, "startP", 22, "endP", 10, "startD", 16.0, "endD", 9.0)
   )).
 }
 
@@ -308,11 +309,11 @@ global function playPreBurnScene {
   local sunH is getSunHeading().
   
   startCameraScene(list(
-    lexicon("duration", duration, "startH", sunH + 30, "endH", sunH - 30, "startP", 25, "endP", 18, "startD", 40, "endD", 50)
+    lexicon("duration", duration, "startH", sunH + 30, "endH", sunH - 30, "startP", 18, "endP", 14, "startD", 18, "endD", 40)
   )).
 }
 
-// Scene 4: Maneuver Burn Scene (3D Ignition rear 3/4 angle zoom-out, followed by slow orbital sweep)
+// Scene 4: Maneuver Burn Scene (3D Ignition rear 3/4 angle zoom-out, followed by tight close-up engine sweep)
 global function playBurnScene {
   parameter duration is -1.
   if not hasCameraAddon { return. }
@@ -339,19 +340,19 @@ global function playBurnScene {
   set rgt to rgt:normalized.
   local upV is vcrs(fwd, rgt):normalized.
   
-  // Camera 3D offset: 22m behind the engine exhaust nozzle (fwd * 22), 8m to left (-rgt * 8), 4m up (+upV * 4)
-  local engineRearOffset is fwd * -22 - rgt * 8 + upV * 4.
+  // Camera 3D offset: 14m behind engine nozzle (-fwd * 14), 5m to left (-rgt * 5), 2.5m up (+upV * 2.5)
+  local engineRearOffset is fwd * -14 - rgt * 5 + upV * 2.5.
   
   local cut1_dur is max(5, min(10, duration * 0.5)).
   local cut2_dur is duration - cut1_dur.
   
   local cutsList is list().
-  // Cut 1: 3D engine rear angle view — camera stays behind engine nozzle in 3D space, rocket accelerates away!
+  // Cut 1: 3D engine rear close-up view — camera stays right behind engine nozzle in 3D space, rocket accelerates away!
   cutsList:add(lexicon("duration", cut1_dur, "orbitOffset", engineRearOffset)).
   
-  // Cut 2: Slow orbital sweep around the burning ship (clockwise)
+  // Cut 2: Tight orbital sweep around the burning ship (clockwise)
   if cut2_dur > 0 {
-    cutsList:add(lexicon("duration", cut2_dur, "startH", sunH - 30, "endH", sunH + 30, "startP", 0, "endP", 20, "startD", 15, "endD", 45)).
+    cutsList:add(lexicon("duration", cut2_dur, "startH", sunH - 45, "endH", sunH + 35, "startP", 6, "endP", 18, "startD", 10, "endD", 35)).
   }
   
   startCameraScene(cutsList).
@@ -365,7 +366,7 @@ global function playBurnEndScene {
   local sunH is getSunHeading().
   
   startCameraScene(list(
-    lexicon("duration", duration, "startH", sunH - 30, "endH", sunH + 30, "startP", 28, "endP", 18, "startD", 45, "endD", 60)
+    lexicon("duration", duration, "startH", sunH - 30, "endH", sunH + 30, "startP", 20, "endP", 12, "startD", 18, "endD", 45)
   )).
 }
 
@@ -377,8 +378,8 @@ global function playReentryScene {
   local sunH is getSunHeading().
   
   startCameraScene(list(
-    lexicon("duration", duration * 0.4, "startH", sunH + 40, "endH", sunH - 20, "startP", -15, "endP", 10, "startD", 30, "endD", 45),
-    lexicon("duration", duration * 0.6, "startH", sunH - 20, "endH", sunH + 25, "startP", 10, "endP", 22, "startD", 45, "endD", 65)
+    lexicon("duration", duration * 0.4, "startH", sunH + 40, "endH", sunH - 20, "startP", -10, "endP", 8, "startD", 12, "endD", 28),
+    lexicon("duration", duration * 0.6, "startH", sunH - 20, "endH", sunH + 25, "startP", 8, "endP", 18, "startD", 28, "endD", 50)
   )).
 }
 
@@ -390,12 +391,12 @@ global function playChuteScene {
   local sunH is getSunHeading().
   
   startCameraScene(list(
-    lexicon("duration", duration * 0.5, "startH", sunH - 30, "endH", sunH + 10, "startP", 50, "endP", 25, "startD", 20, "endD", 35),
-    lexicon("duration", duration * 0.5, "startH", sunH + 30, "endH", sunH - 10, "startP", 25, "endP", 10, "startD", 35, "endD", 50)
+    lexicon("duration", duration * 0.5, "startH", sunH - 30, "endH", sunH + 10, "startP", 45, "endP", 18, "startD", 8.0, "endD", 22.0),
+    lexicon("duration", duration * 0.5, "startH", sunH + 30, "endH", sunH - 10, "startP", 18, "endP", 8, "startD", 22.0, "endD", 35.0)
   )).
 }
 
-// Scene 7: Landing Scene (Suicide burn slow sweep, low touchdown sweep <20m)
+// Scene 7: Landing Scene (Suicide burn close-up, low touchdown sweep <6m)
 global function playLandingScene {
   parameter duration is -1.
   if not hasCameraAddon { return. }
@@ -403,12 +404,12 @@ global function playLandingScene {
   local sunH is getSunHeading().
   
   startCameraScene(list(
-    lexicon("duration", duration * 0.5, "startH", sunH - 30, "endH", sunH + 10, "startP", 28, "endP", 16, "startD", 40, "endD", 28),
-    lexicon("duration", duration * 0.5, "startH", sunH + 30, "endH", sunH - 10, "startP", 16, "endP", 5, "startD", 28, "endD", 15)
+    lexicon("duration", duration * 0.5, "startH", sunH - 45, "endH", sunH + 10, "startP", 18, "endP", 10, "startD", 18.0, "endD", 9.0),
+    lexicon("duration", duration * 0.5, "startH", sunH + 30, "endH", sunH - 10, "startP", 10, "endP", 4, "startD", 9.0, "endD", 5.5)
   )).
 }
 
-// Scene 8: Staging Separation Scene (Close-up 3Model rear offset tracking interstage separation)
+// Scene 8: Staging Separation Scene (Close-up 3D rear offset tracking interstage separation)
 global function playStagingScene {
   parameter duration is -1.
   if not hasCameraAddon { return. }
@@ -420,7 +421,7 @@ global function playStagingScene {
   set rgt to rgt:normalized.
   local upV is vcrs(fwd, rgt):normalized.
   
-  local stagingOffset is fwd * -20 + rgt * 6 + upV * 3.
+  local stagingOffset is fwd * -12 + rgt * 4 + upV * 2.
   
   startCameraScene(list(
     lexicon("duration", duration, "orbitOffset", stagingOffset)
@@ -435,7 +436,7 @@ global function playSOITransitionScene {
   local sunH is getSunHeading().
   
   startCameraScene(list(
-    lexicon("duration", duration, "startH", sunH - 30, "endH", sunH + 30, "startP", 25, "endP", 15, "startD", 50, "endD", 75)
+    lexicon("duration", duration, "startH", sunH - 30, "endH", sunH + 30, "startP", 18, "endP", 12, "startD", 25, "endD", 55)
   )).
 }
 
@@ -453,8 +454,8 @@ global function playFlybyScene {
   local sunH is getSunHeading().
   
   startCameraScene(list(
-    lexicon("duration", duration * 0.5, "startH", sunH - 30, "endH", sunH + 10, "startP", 25, "endP", 12, "startD", 45, "endD", 75),
-    lexicon("duration", duration * 0.5, "startH", sunH + 40, "endH", sunH - 10, "startP", 12, "endP", 30, "startD", 75, "endD", 110)
+    lexicon("duration", duration * 0.5, "startH", sunH - 30, "endH", sunH + 10, "startP", 18, "endP", 10, "startD", 20, "endD", 45),
+    lexicon("duration", duration * 0.5, "startH", sunH + 40, "endH", sunH - 10, "startP", 10, "endP", 22, "startD", 45, "endD", 85)
   )).
 }
 
@@ -466,7 +467,7 @@ global function playLunarLaunchScene {
   local sunH is getSunHeading().
   
   startCameraScene(list(
-    lexicon("duration", duration, "startH", sunH - 20, "endH", sunH + 20, "startP", 15, "endP", 25, "startD", 35, "endD", 65)
+    lexicon("duration", duration, "startH", sunH - 20, "endH", sunH + 20, "startP", 10, "endP", 18, "startD", 14, "endD", 45)
   )).
   set stagingCutsEnabled to false.
 }
@@ -487,7 +488,7 @@ global function getKerbinHeading {
   return kerbinH.
 }
 
-// Scene 12: Long Cinematic Rover Scene (Full 360° orbiting sweeps, Kerbin-in-background framing, wide angle zooms)
+// Scene 12: Long Cinematic Rover Scene (Full 360° orbiting sweeps, tight macro close-ups, Kerbin-in-background framing, dynamic zooms)
 global function playRoverCinematicScene {
   parameter duration is -1.
   if not hasCameraAddon { return. }
@@ -498,23 +499,26 @@ global function playRoverCinematicScene {
   // Camera heading looking PAST the rover toward Kerbin
   local kerbinBgH is kerbinH + 180.
 
-  local cutTime is duration / 5.
+  local cutTime is duration / 6.
 
   startCameraScene(list(
-    // Cut 1: Kerbin Background Framing — Low-angle wide-zoom shot with Kerbin/Sky in background
-    lexicon("duration", cutTime, "startH", kerbinBgH - 45, "endH", kerbinBgH + 45, "startP", 8, "endP", 14, "startD", 35, "endD", 18),
+    // Cut 1: Macro Wheel & Suspension Ground Close-Up (Tight 4.8m low-angle tracking)
+    lexicon("duration", cutTime, "startH", sunH + 60, "endH", sunH + 120, "startP", 4, "endP", 10, "startD", 4.8, "endD", 8.5),
 
-    // Cut 2: Full 360° Continuous Orbiting Sweep — Slowly circles around the rover
-    lexicon("duration", cutTime * 1.5, "startH", sunH, "endH", sunH + 360, "startP", 15, "endP", 22, "startD", 20, "endD", 28),
+    // Cut 2: Solar Array & Science Sensor Detail (Close-up 5.5m framing)
+    lexicon("duration", cutTime, "startH", sunH - 45, "endH", sunH + 45, "startP", 20, "endP", 10, "startD", 5.5, "endD", 10.0),
 
-    // Cut 3: Ultra-Wide Horizon & Terrain Sweep — Long cinematic zoom-out showing landscape
-    lexicon("duration", cutTime, "startH", sunH + 90, "endH", sunH + 210, "startP", 10, "endP", 25, "startD", 15, "endD", 65),
+    // Cut 3: Kerbin Background Framing — Dramatic Zoom-Out from 6.5m close-up to 38m wide angle with Kerbin in sky
+    lexicon("duration", cutTime * 1.2, "startH", kerbinBgH - 30, "endH", kerbinBgH + 30, "startP", 8, "endP", 18, "startD", 6.5, "endD", 38.0),
 
-    // Cut 4: Low-Angle Wheel & Track Pass — Close ground level sweep as rover drives/explores
-    lexicon("duration", cutTime, "startH", sunH - 120, "endH", sunH - 30, "startP", 5, "endP", 12, "startD", 12, "endD", 25),
+    // Cut 4: Full 360° Tight Orbiting Sweep — Slowly circles around the rover close-up (7.5m)
+    lexicon("duration", cutTime * 1.5, "startH", sunH, "endH", sunH + 360, "startP", 14, "endP", 20, "startD", 7.5, "endD", 12.5),
 
-    // Cut 5: High Satellite Observer View — High-angle bird's eye orbit
-    lexicon("duration", cutTime * 0.5, "startH", kerbinBgH + 30, "endH", kerbinBgH - 30, "startP", 45, "endP", 30, "startD", 50, "endD", 30)
+    // Cut 5: Low-Angle Track & Steering Close-Up — Ground level sweep watching wheels steer (5.0m)
+    lexicon("duration", cutTime, "startH", sunH - 140, "endH", sunH - 50, "startP", 4, "endP", 12, "startD", 5.0, "endD", 11.0),
+
+    // Cut 6: Dramatic Wide Horizon Pass — Cinematic zoom-out showing the vast lunar landscape
+    lexicon("duration", cutTime, "startH", sunH + 120, "endH", sunH + 240, "startP", 10, "endP", 25, "startD", 10.0, "endD", 48.0)
   )).
 }
 
