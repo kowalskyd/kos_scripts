@@ -187,6 +187,56 @@ global function handleAirborne {
   }
 }
 
+// Executes a 60-degree detour around crater rims / steep ridge drop-offs
+global function executeRidgeDetour {
+  hudText("CLIFF DETECTED: Executing 60-deg ridge detour...", 4, 2, 25, rgb(1, 0.5, 0.0), false).
+  brakes on.
+  set targetThrottle to 0.
+  unlock wheelsteering.
+  unlock wheelthrottle.
+  wait 0.8.
+
+  // 1. Reverse 12 meters back from the cliff edge to clear danger zone
+  brakes off.
+  lock wheelthrottle to -0.35.
+  local reverseStart is time:seconds.
+  wait until (time:seconds - reverseStart > 3.5) or not (ship:status = "LANDED").
+  
+  brakes on.
+  lock wheelthrottle to 0.
+  wait 0.5.
+
+  // 2. Calculate detour heading (60 deg to the right along crater rim)
+  local currentHDG is ship:heading.
+  local detourHDG is mod(currentHDG + 60, 360).
+  local detourHeadingVector is heading(detourHDG, 0):vector.
+  local detourGeo is ship:body:geopositionof(ship:position + detourHeadingVector * 45).
+
+  hudText("Routing around crater rim...", 3, 2, 20, rgb(0.2, 0.8, 1.0), false).
+
+  // 3. Drive 45 meters along detour path around the rim
+  brakes off.
+  local localThrottle is 0.
+  lock wheelsteering to detourGeo.
+  lock wheelthrottle to localThrottle.
+
+  local detourStart is time:seconds.
+  until (time:seconds - detourStart > 12) or (detourGeo:distance < 12) {
+    local curSpd is ship:groundspeed.
+    if curSpd < 4.0 {
+      set localThrottle to 0.4.
+    } else {
+      set localThrottle to 0.
+    }
+    wait 0.1.
+  }
+
+  brakes on.
+  lock wheelthrottle to 0.
+  wait 0.5.
+  hudText("Detour complete: Resuming waypoint navigation.", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
+}
+
 // Suspends movement and operations when the sun is down with automatic high-speed timewarp and vessel hibernation
 global function waitForSunlight {
   if not isSunUp() {
@@ -433,15 +483,18 @@ global function driveToCoordinates {
     local hDiff is aheadGeoPos:terrainheight - currentGeoPos:terrainheight.
     local aheadSlope is arctan2(hDiff, lookDist).
 
+    // Cliff / Drop-off / Steep Ridge Ahead Protection: Trigger Detour
+    if aheadSlope < -14 or hDiff < -5 {
+      executeRidgeDetour().
+      brakes off.
+      lock wheelsteering to targetGeo.
+      lock wheelthrottle to targetThrottle.
+    }
+
     // Dynamic Terrain-Adaptive Speed Controller
     local safeSpeed is maxSpeed.
 
-    // Cliff / Drop-off / Steep Ridge Ahead Protection
-    if aheadSlope < -14 or hDiff < -5 {
-      brakes on.
-      set safeSpeed to min(safeSpeed, 2.0). // Slow down to 2 m/s before reaching edge
-      hudText("RIDGE / CLIFF AHEAD: Slowing down for edge!", 2, 2, 20, rgb(1, 0.4, 0.0), false).
-    } else if aheadSlope > 18 or hDiff > 6 {
+    if aheadSlope > 18 or hDiff > 6 {
       set safeSpeed to min(safeSpeed, 3.5). // Hill crest speed limit
     }
 
@@ -455,8 +508,10 @@ global function driveToCoordinates {
       set safeSpeed to min(safeSpeed, 4.0). // Slope speed limit
     }
     
-    // Throttle logic
-    if curSpeed < safeSpeed {
+    // Throttle logic (Never apply throttle if brakes are on)
+    if brakes {
+      set targetThrottle to 0.
+    } else if curSpeed < safeSpeed {
       set targetThrottle to min(1.0, (safeSpeed - curSpeed) * 0.5 + 0.2).
     } else {
       set targetThrottle to 0.
