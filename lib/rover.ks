@@ -4,11 +4,238 @@
 //_________________________________________________
 //‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
 
+global lastScienceBiome is "".
+
+// Suffix helper for padding
+local function padRight {
+  parameter str, length.
+  local padded is "" + str.
+  until padded:length >= length {
+    set padded to padded + " ".
+  }
+  return padded.
+}
+
+// Queries surface sector / biome safely without crashing across kOS versions
+global function getCurrentBiome {
+  // 1. Try SCANsat addon if installed
+  if defined addons and addons:hasSuffix("scansat") {
+    return addons:scansat:currentbiome().
+  }
+  
+  // 2. Try to extract biome from active science experiment data
+  for p in ship:parts {
+    for m in p:modules {
+      if m = "ModuleScienceExperiment" {
+        local exp is p:getModule("ModuleScienceExperiment").
+        if exp:hasdata and exp:data:length > 0 {
+          local title is exp:data[0]:title.
+          if title:contains(" from ") {
+            return title:split(" from ")[1].
+          }
+        }
+      }
+    }
+  }
+  
+  // 3. Coordinate Sector Fallback (Unique 0.05-deg geographical grid cell)
+  local sectorLat is round(ship:geoposition:lat * 20) / 20.
+  local sectorLng is round(ship:geoposition:lng * 20) / 20.
+  return "Sector (" + sectorLat + ", " + sectorLng + ")".
+}
+
+// Checks if the Sun is above the horizon at the rover's current location
+global function isSunUp {
+  local sunVec is body("Sun"):position.
+  local sunAngle is vAng(sunVec, ship:up:vector).
+  return sunAngle < 89.0. // Sun above horizon (with 1-deg horizon margin)
+}
+
+// Helper to query current amount and max capacity of Electric Charge
+global function getECInfo {
+  local curEC is ship:electriccharge.
+  local maxEC is 0.
+  for res in ship:resources {
+    if res:name = "ELECTRICCHARGE" {
+      set curEC to res:amount.
+      set maxEC to res:capacity.
+    }
+  }
+  return list(curEC, maxEC).
+}
+
+// Auto-upright recovery if rover flips or tumbles onto its roof
+global function recoverFromFlip {
+  local currentTilt is vAng(ship:up:vector, ship:facing:topvector).
+  if currentTilt > 45 {
+    hudText("WARNING: Rover flip detected! Attempting auto-upright...", 5, 2, 25, rgb(1, 0.2, 0.2), false).
+    brakes on.
+    set targetThrottle to 0.
+    unlock wheelsteering.
+    unlock wheelthrottle.
+    
+    // Enable SAS reaction wheel torque impulse to flip back onto wheels
+    sas on.
+    set ship:control:roll to 1.0.
+    set ship:control:pitch to 1.0.
+    wait 0.8.
+    set ship:control:roll to -1.0.
+    set ship:control:pitch to -1.0.
+    wait 0.8.
+    set ship:control:neutral to true.
+    
+    wait until vAng(ship:up:vector, ship:facing:topvector) < 25 or ship:groundspeed < 0.1.
+    brakes off.
+  }
+}
+
+// Mid-Air Jump Stabilizer: Levels reaction wheels while airborne for safe 4-wheel touchdown
+global function handleAirborne {
+  if not (ship:status = "LANDED" or ship:status = "SPLASHED") {
+    hudText("AIRBORNE JUMP DETECTED! Aligning wheels for touchdown...", 4, 2, 25, rgb(1, 0.5, 0.0), false).
+    brakes off. // Allow wheels to rotate freely on landing impact
+    set targetThrottle to 0.
+    sas on.
+
+    until ship:status = "LANDED" or ship:status = "SPLASHED" {
+      local airPitch is 90 - vAng(ship:up:vector, ship:facing:forevector).
+      local airRoll is 90 - vAng(ship:up:vector, ship:facing:starvector).
+      
+      // Active reaction wheel torque to keep roof facing UP and belly facing DOWN
+      set ship:control:pitch to min(1.0, max(-1.0, -airPitch * 0.1)).
+      set ship:control:roll to min(1.0, max(-1.0, -airRoll * 0.1)).
+      wait 0.05.
+    }
+
+    set ship:control:neutral to true.
+    brakes on.
+    hudText("TOUCHDOWN! Rover stabilized.", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
+    wait 0.5.
+    brakes off.
+  }
+}
+
+// Suspends movement and operations when the sun is down with automatic high-speed timewarp
+global function waitForSunlight {
+  if not isSunUp() {
+    hudText("NIGHTTIME DETECTED: Suspending movement & warping to sunrise...", 5, 2, 25, rgb(1, 0.5, 0.0), false).
+    brakes on.
+    set targetThrottle to 0.
+    wait until ship:groundspeed < 0.05. // Ensure rover is completely stationary before timewarp
+
+    // Switch to RAILS timewarp for high-speed warp across the night
+    set kuniverse:timewarp:mode to "RAILS".
+    wait 0.2.
+
+    until isSunUp() {
+      local ecData is getECInfo().
+      local sunAngle is round(vAng(body("Sun"):position, ship:up:vector), 1).
+
+      local targetWarp is 5.
+      if sunAngle < 92 {
+        set targetWarp to 1.
+      } else if sunAngle < 105 {
+        set targetWarp to 3.
+      }
+
+      if kuniverse:timewarp:issettled and kuniverse:timewarp:warp <> targetWarp {
+        set kuniverse:timewarp:warp to targetWarp.
+      }
+
+      local ecPct is 100.
+      if ecData[1] > 0 { set ecPct to round((ecData[0] / ecData[1]) * 100). }
+
+      print "--- Night Mode (Auto-Warp Active) ---" at (0, 7).
+      print "Sun Angle:  " + padRight(sunAngle + " deg (Waiting < 89)", 30) at (0, 8).
+      print "E.Charge:   " + padRight(round(ecData[0]) + "/" + round(ecData[1]) + " (" + ecPct + "%)", 30) at (0, 9).
+      print "                                                                " at (0, 10).
+      wait 0.2.
+    }
+
+    set kuniverse:timewarp:rate to 1.
+    wait until kuniverse:timewarp:rate = 1.
+    
+    print "                                                                " at (0, 7).
+    print "                                                                " at (0, 8).
+    print "                                                                " at (0, 9).
+    hudText("SUNRISE DETECTED: Resuming operations!", 4, 2, 20, rgb(0.2, 1.0, 0.4), false).
+  }
+}
+
+// Waits until Electric Charge (EC) is fully recharged (>= 98%) with automatic timewarp
+global function waitForFullEC {
+  local ecData is getECInfo().
+  local curEC is ecData[0].
+  local maxEC is ecData[1].
+
+  if maxEC <= 0 { return. }
+  
+  if (curEC / maxEC) < 0.95 {
+    hudText("Charging batteries (High-Speed Auto-Warp)...", 4, 2, 20, rgb(1, 0.8, 0.2), false).
+    brakes on.
+    set targetThrottle to 0.
+    wait until ship:groundspeed < 0.05.
+
+    if not isSunUp() {
+      waitForSunlight().
+    }
+
+    set kuniverse:timewarp:mode to "RAILS".
+    wait 0.2.
+
+    if kuniverse:timewarp:issettled {
+      set kuniverse:timewarp:warp to 4.
+    }
+
+    until false {
+      set ecData to getECInfo().
+      set curEC to ecData[0].
+      set maxEC to ecData[1].
+
+      if maxEC <= 0 or (curEC / maxEC) >= 0.98 {
+        break.
+      }
+
+      if not isSunUp() {
+        set kuniverse:timewarp:rate to 1.
+        wait until kuniverse:timewarp:rate = 1.
+        waitForSunlight().
+      }
+
+      if kuniverse:timewarp:issettled and kuniverse:timewarp:warp < 4 {
+        set kuniverse:timewarp:warp to 4.
+      }
+
+      local ecPct is 100.
+      if maxEC > 0 { set ecPct to round((curEC / maxEC) * 100). }
+
+      print "--- Charging Batteries (Auto-Warp) ---" at (0, 7).
+      print "E.Charge:   " + padRight(round(curEC) + "/" + round(maxEC) + " (" + ecPct + "%)", 30) at (0, 8).
+      print "                                                                " at (0, 9).
+      wait 0.2.
+    }
+
+    set kuniverse:timewarp:rate to 1.
+    wait until kuniverse:timewarp:rate = 1.
+
+    hudText("Batteries fully charged!", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
+  }
+}
+
 global function driveToCoordinates {
   parameter targetLat.
   parameter targetLng.
-  parameter maxSpeed is 6. // m/s
-  parameter arrivalRadius is 12. // meters
+  parameter maxSpeed is 10. // m/s (Fast cruising)
+  parameter arrivalRadius is 15. // meters
+  parameter autoCollectBiomes is true.
+
+  // Check sunlight and EC before beginning drive
+  waitForSunlight().
+  waitForFullEC().
+
+  if lastScienceBiome = "" {
+    set lastScienceBiome to getCurrentBiome().
+  }
 
   local targetGeo is latlng(targetLat, targetLng).
   
@@ -16,12 +243,53 @@ global function driveToCoordinates {
   
   brakes off.
   
+  // Enable SAS to help stabilize reaction wheel anti-roll
+  sas on.
+
   // Set up kOS steering and throttle manager for rovers
   local targetThrottle is 0.
   lock wheelsteering to targetGeo.
   lock wheelthrottle to targetThrottle.
   
   until false {
+    // Check for airborne jumps / launches
+    if not (ship:status = "LANDED" or ship:status = "SPLASHED") {
+      handleAirborne().
+      brakes off.
+      lock wheelsteering to targetGeo.
+      lock wheelthrottle to targetThrottle.
+    }
+
+    // Nighttime check: pause driving if sun goes down
+    if not isSunUp() {
+      brakes on.
+      set targetThrottle to 0.
+      unlock wheelsteering.
+      unlock wheelthrottle.
+      waitForSunlight().
+      waitForFullEC().
+      brakes off.
+      lock wheelsteering to targetGeo.
+      lock wheelthrottle to targetThrottle.
+    }
+
+    // Check for Biome boundary crossings during drive
+    local currentBiome is getCurrentBiome().
+    if autoCollectBiomes and lastScienceBiome <> "" and currentBiome <> lastScienceBiome {
+      hudText("NEW BIOME ENTERED: " + currentBiome:toUpper() + "!", 4, 2, 20, rgb(0.2, 1.0, 0.4), false).
+      brakes on.
+      set targetThrottle to 0.
+      unlock wheelsteering.
+      unlock wheelthrottle.
+      
+      runScienceExperiments().
+      set lastScienceBiome to currentBiome.
+      
+      brakes off.
+      lock wheelsteering to targetGeo.
+      lock wheelthrottle to targetThrottle.
+    }
+
     local dist is targetGeo:distance.
     local curSpeed is ship:groundspeed.
     local bearingTo is targetGeo:bearing. // relative angle to target (-180 to 180)
@@ -41,48 +309,82 @@ global function driveToCoordinates {
     // Total tilt: tilt of the rover's roof relative to vertical
     local currentTilt is vAng(ship:up:vector, ship:facing:topvector).
     
-    // Safety check: check tilt/pitch for tipping
-    if abs(currentPitch) > 25 or currentTilt > 25 {
+    // Check for flip / rollover hazard
+    if currentTilt > 45 {
+      recoverFromFlip().
+    } else if abs(currentPitch) > 22 or currentTilt > 22 {
+      // Steep incline hazard: slow down / stop until settled
       brakes on.
       set targetThrottle to 0.
-      hudText("HAZARD DETECTED: Steep incline! Stopping.", 5, 2, 25, rgb(1, 0, 0), false).
-      wait until abs(90 - vAng(ship:up:vector, ship:facing:forevector)) <= 20 and vAng(ship:up:vector, ship:facing:topvector) <= 20.
+      hudText("STEEP INCLINE: Regulating speed for safety...", 3, 2, 20, rgb(1, 0.5, 0.0), false).
+      wait until abs(90 - vAng(ship:up:vector, ship:facing:forevector)) <= 18 and vAng(ship:up:vector, ship:facing:topvector) <= 18.
       brakes off.
+    }
+
+    // Proactive Terrain Lookahead Scanner (30 meters ahead of facing)
+    local lookDist is max(15, curSpeed * 3.5).
+    local currentGeoPos is ship:geoposition.
+    local aheadGeoPos is ship:body:geopositionof(ship:position + ship:facing:forevector * lookDist).
+    local hDiff is aheadGeoPos:terrainheight - currentGeoPos:terrainheight.
+    local aheadSlope is arctan2(hDiff, lookDist).
+
+    // Dynamic Terrain-Adaptive Speed Controller
+    local safeSpeed is maxSpeed.
+
+    // Cliff / Drop-off / Steep Ridge Ahead Protection
+    if aheadSlope < -14 or hDiff < -5 {
+      brakes on.
+      set safeSpeed to min(safeSpeed, 2.0). // Slow down to 2 m/s before reaching edge
+      hudText("RIDGE / CLIFF AHEAD: Slowing down for edge!", 2, 2, 20, rgb(1, 0.4, 0.0), false).
+    } else if aheadSlope > 18 or hDiff > 6 {
+      set safeSpeed to min(safeSpeed, 3.5). // Hill crest speed limit
+    }
+
+    if abs(bearingTo) > 40 {
+      set safeSpeed to min(safeSpeed, 3.5). // Sharp cornering speed
+    } else if abs(bearingTo) > 15 {
+      set safeSpeed to min(safeSpeed, 5.0). // Moderate cornering speed
+    }
+
+    if abs(currentPitch) > 10 or currentTilt > 10 {
+      set safeSpeed to min(safeSpeed, 4.0). // Slope speed limit
     }
     
     // Throttle logic
-    // Reduce throttle if speed is close to max, or if we need to make a sharp turn.
-    if curSpeed < maxSpeed {
-      // Scale throttle based on alignment with the target heading
-      if abs(bearingTo) > 45 {
-        // Sharp turn needed: slow down
-        set targetThrottle to 0.15.
-      } else if abs(bearingTo) > 15 {
-        // Moderate turn: medium throttle
-        set targetThrottle to 0.3.
-      } else {
-        // Well-aligned: accelerate up to max speed
-        set targetThrottle to min(1.0, (maxSpeed - curSpeed) * 0.5 + 0.2).
-      }
+    if curSpeed < safeSpeed {
+      set targetThrottle to min(1.0, (safeSpeed - curSpeed) * 0.5 + 0.2).
     } else {
-      // Over speed limit: coast or brake slightly
       set targetThrottle to 0.
     }
     
-    // Telemetry display
-    print "--- Rover Telemetry ---" at (0, 4).
-    print "Distance to target: " + round(dist, 1) + " m     " at (0, 5).
-    print "Speed: " + round(curSpeed, 2) + " m/s / " + maxSpeed + " m/s    " at (0, 6).
-    print "Bearing to target: " + round(bearingTo, 1) + " deg    " at (0, 7).
-    print "Pitch: " + round(currentPitch, 1) + " / Tilt: " + round(currentTilt, 1) + "      " at (0, 8).
+    local ecData is getECInfo().
+    local ecCur is ecData[0].
+    local ecMax is ecData[1].
+    local ecPct is 100.
+    if ecMax > 0 { set ecPct to round((ecCur / ecMax) * 100). }
+
+    // Clean standalone telemetry display
+    print "--- Rover Telemetry ---" at (0, 7).
+    print "Biome:      " + padRight(currentBiome, 30) at (0, 8).
+    print "Distance:   " + padRight(round(dist, 1) + " m", 30) at (0, 9).
+    print "Speed:      " + padRight(round(curSpeed, 1) + " / " + round(safeSpeed, 1) + " m/s", 30) at (0, 10).
+    print "Ahead Slope:" + padRight(round(aheadSlope, 1) + " deg", 30) at (0, 11).
+    print "Pitch/Tilt: " + padRight(round(currentPitch, 1) + " / " + round(currentTilt, 1), 30) at (0, 12).
+    print "E.Charge:   " + padRight(round(ecCur) + "/" + round(ecMax) + " (" + ecPct + "%)", 30) at (0, 13).
     
     wait 0.1.
   }
 }
 
 global function runScienceExperiments {
-  hudText("Deploying science experiments...", 3, 2, 20, rgb(0.2, 0.6, 1.0), false).
-  
+  // Ensure daylight and full battery before running experiments
+  waitForSunlight().
+  waitForFullEC().
+
+  set lastScienceBiome to getCurrentBiome().
+
+  hudText("Deploying science suite (" + lastScienceBiome + ")...", 3, 2, 20, rgb(0.2, 0.6, 1.0), false).
+
   local experimentsList is list().
   for p in ship:parts {
     for m in p:modules {
@@ -93,7 +395,7 @@ global function runScienceExperiments {
   }
   
   if experimentsList:length = 0 {
-    print "No science experiments found on this vessel." at (0, 10).
+    print "No science experiments found on vessel." at (0, 14).
     return.
   }
   
@@ -101,7 +403,8 @@ global function runScienceExperiments {
     // If the experiment already has data, try to transmit it if online
     if exp:hasdata and ship:connection:isconnected {
       exp:transmit().
-      wait 0.5.
+      local tStart is time:seconds.
+      wait until (not exp:hasdata) or (time:seconds - tStart > 25).
     }
     
     // Deploy the experiment if it has no data
@@ -114,11 +417,9 @@ global function runScienceExperiments {
     // Transmit if connected, otherwise leave it stored on the sensor
     if exp:hasdata {
       if ship:connection:isconnected {
-        print "Transmitting: " + exp:part:title + "      " at (0, 11).
         exp:transmit().
-        wait 1.5.
-      } else {
-        print "Stored on part: " + exp:part:title + "     " at (0, 11).
+        local tStart is time:seconds.
+        wait until (not exp:hasdata) or (time:seconds - tStart > 25).
       }
     }
   }
@@ -127,7 +428,6 @@ global function runScienceExperiments {
   // to reset the individual science parts for the next waypoint.
   local containerList is ship:modulesNamed("ModuleScienceContainer").
   if containerList:length > 0 {
-    print "Collecting data to science container..." at (0, 12).
     local container is containerList[0].
     if container:hasaction("collect all") {
       container:doAction("collect all", true).
@@ -137,8 +437,18 @@ global function runScienceExperiments {
       container:doEvent("container: collect all").
     }
     wait 1.0.
-    print "                                        " at (0, 12).
+  }
+
+  // Ensure all transmission activity finishes before returning so timewarp is unimpeded
+  local transStart is time:seconds.
+  until (time:seconds - transStart > 25) {
+    local busy is false.
+    for exp in experimentsList {
+      if exp:hasdata and ship:connection:isconnected { set busy to true. }
+    }
+    if not busy { break. }
+    wait 0.5.
   }
   
-  hudText("All experiments processed!", 3, 2, 20, rgb(0.2, 0.6, 1.0), false).
+  hudText("Science gathered for: " + lastScienceBiome, 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
 }

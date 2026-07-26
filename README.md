@@ -145,10 +145,12 @@ Automates boostback, atmospheric re-entry, and precision landing of reusable fir
 
 ### Rover Surface Exploration (`explore.ks`)
 
-Automated ground exploration program operating on rover craft:
-- Computes spherical surface projection offsets from landing location:
-  $$\Delta \text{lat} = \frac{\Delta N}{R_{\text{body}}} \times \frac{180}{\pi}, \quad \Delta \text{lng} = \frac{\Delta E}{R_{\text{body}} \cos(\text{lat})} \times \frac{180}{\pi}$$
-- Generates procedural surface waypoints, drives rover via `driveToCoordinates()` with pitch/roll tipping hazard detection ($>25^\circ$), deploys science modules (`ModuleScienceExperiment`), transmits data, and collects findings into science containers (`ModuleScienceContainer`).
+Automated long-range ground exploration program operating on rover craft:
+- **Biome-Smart Navigation**: Computes long-distance cross-country waypoints (2,500m to 4,500m steps). Continuously tracks current surface biome/sector (`getCurrentBiome()`); automatically engages brakes, deploys science modules (`ModuleScienceExperiment`), transfers data to the Experiment Storage Unit (`ModuleScienceContainer`), resets sensors, and resumes driving whenever crossing into a newly discovered biome.
+- **Proactive Ridge Lookahead Scanner**: Projects terrain 15m to 40m ahead along facing vector (`ship:body:geopositionof(...)`). Detects cliff ledges and steep drop-offs ($>14^\circ$ drop) and automatically slows the rover to 2.0 m/s before reaching the edge.
+- **Terrain-Adaptive Speed Control**: Cruising speed automatically scales up to 10 m/s on flat terrain, while dynamically throttling down on sharp turns ($>15^\circ$), steep slopes ($>10^\circ$), or hill crests to prevent centrifugal side-flipping.
+- **Mid-Air Jump & Flip Protection**: Features a mid-air reaction wheel stabilizer (`handleAirborne()`) that levels the rover parallel to the horizon for safe 4-wheel touchdowns during low-gravity jumps, paired with an auto-righting flip recovery routine (`recoverFromFlip()`).
+- **High-Speed RAILS Timewarp**: Warps stationary rovers through lunar night to sunrise and fast-charges batteries to 100% capacity at up to 10,000x speed (`RAILS` mode).
 
 ### In-Flight Entertainment System (`ife.ks`)
 
@@ -223,9 +225,12 @@ Calculates interplanetary transfer windows and ejection burns:
 
 ### Surface Rover Control ([`lib/rover.ks`](file:///Users/danielkowalsky/Library/Application%20Support/Steam/steamapps/common/Kerbal%20Space%20Program/Ships/Script/lib/rover.ks))
 
-Ground rover autonomy module:
-- `driveToCoordinates(targetLat, targetLng, maxSpeed, arrivalRadius)`: Locks `wheelsteering` to target coordinates, controls `wheelthrottle` based on speed and relative bearing, monitors pitch and roll tilt angles, and engages `brakes on` if terrain slope exceeds $25^\circ$.
-- `runScienceExperiments()`: Queries `ModuleScienceExperiment`, deploys active experiments, transmits data via telemetry link if connected, and transfers stored data into `ModuleScienceContainer`.
+Ground rover autonomy library:
+- `driveToCoordinates(targetLat, targetLng, maxSpeed, arrivalRadius, autoCollectBiomes)`: Autonomously navigates to waypoints with 30m forward terrain slope lookahead (`ship:body:geopositionof(...)`), cornering speed governors ($3.5\text{ m/s}$ on turns $>15^\circ$), inclination throttling ($4\text{ m/s}$ on slopes $>10^\circ$), and mid-transit biome boundary science triggers.
+- `handleAirborne()`: Monitors flight status when airborne; uses SAS reaction wheel torque to level pitch and roll parallel to the horizon for safe 4-wheel landings.
+- `recoverFromFlip()`: Detects vessel rollovers ($>45^\circ$ tilt) and applies reaction wheel torque impulses to auto-upright the rover back onto its wheels.
+- `waitForSunlight()` & `waitForFullEC()`: Suspends operations during lunar night or low battery; engages RAILS timewarp up to $10,000\times$ to fast-forward to sunrise/full battery in $<1$ second.
+- `runScienceExperiments()`: Deploys all active `ModuleScienceExperiment` parts, transmits data over radio link, transfers data into `ModuleScienceContainer`, and resets sensors for repeat use.
 
 ### Geostationary Orbit Mechanics ([`lib/geostationary.ks`](file:///Users/danielkowalsky/Library/Application%20Support/Steam/steamapps/common/Kerbal%20Space%20Program/Ships/Script/lib/geostationary.ks))
 

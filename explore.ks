@@ -1,5 +1,6 @@
 runOncePath("0:/lib/system.ks").
 runOncePath("0:/lib/rover.ks").
+runOncePath("0:/lib/camera_director.ks").
 
 wait 0.1.
 
@@ -14,6 +15,9 @@ if antenna:length > 0 {
   deployAntenna().
 }
 wait 1.
+
+// Start continuous cinematic camera director cuts around the rover
+playRoverCinematicScene(600).
 
 // Get starting position
 local startGeo is ship:geoposition.
@@ -36,9 +40,9 @@ local currentOffsetN is 0.
 local currentOffsetE is 0.
 
 until false {
-  // Choose a random step size (between -1000 and +1000 meters, a factor of 10 increase)
-  local stepN is (random() * 2000) - 1000.
-  local stepE is (random() * 2000) - 1000.
+  // Step size: 2,500m to 4,500m per waypoint to traverse across biomes
+  local stepN is (random() * 4000) - 2000.
+  local stepE is (random() * 4000) - 2000.
   
   set currentOffsetN to currentOffsetN + stepN.
   set currentOffsetE to currentOffsetE + stepE.
@@ -47,20 +51,23 @@ until false {
   local distFromStart is sqrt(currentOffsetN^2 + currentOffsetE^2).
   
   clearScreen.
-  print "=== Planet Mapping Active ===".
+  print "=== Biome Exploration Active ===".
+  print "Current Biome: " + getCurrentBiome().
   print "Targeting Waypoint #" + waypointIndex.
-  print "Offset North: " + round(currentOffsetN, 1) + " m".
-  print "Offset East:  " + round(currentOffsetE, 1) + " m".
-  print "Distance from landing site: " + round(distFromStart, 1) + " m".
-  print "-----------------------------".
+  print "Distance from base: " + round(distFromStart, 1) + " m".
+  print "---------------------------------".
   
-  // Drive to the destination at a safe speed of 5 m/s
-  driveToCoordinates(nextWp[0], nextWp[1], 5, 10).
+  // Ensure daylight and full battery before driving
+  waitForSunlight().
+  waitForFullEC().
+
+  // Drive to destination with dynamic cruising speed up to 8 m/s
+  // (Auto-collects science whenever crossing into a NEW biome during transit)
+  driveToCoordinates(nextWp[0], nextWp[1], 8, 15, true).
   
-  // Arrived, run experiments
+  // Arrived at waypoint
   wait 1.
-  runScienceExperiments().
-  wait 3.
+  waitForFullEC().
   
   set waypointIndex to waypointIndex + 1.
 }

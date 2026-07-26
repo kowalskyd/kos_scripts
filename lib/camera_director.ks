@@ -471,6 +471,53 @@ global function playLunarLaunchScene {
   set stagingCutsEnabled to false.
 }
 
+// Helper to get the heading towards Kerbin relative to current vessel position
+global function getKerbinHeading {
+  local targetBody is BODY("Kerbin").
+  if not (body:name = "Mun" or body:name = "Minmus") {
+    set targetBody to body.
+  }
+  local kerbinVec is targetBody:position - ship:position.
+  local northVec is heading(0, 0):vector.
+  local eastVec is heading(90, 0):vector.
+  local horizVec is kerbinVec - vdot(kerbinVec, up:vector) * up:vector.
+  if horizVec:mag < 0.001 { set horizVec to kerbinVec. }
+  local kerbinH is arctan2(vdot(eastVec, horizVec), vdot(northVec, horizVec)).
+  if kerbinH < 0 { set kerbinH to kerbinH + 360. }
+  return kerbinH.
+}
+
+// Scene 12: Long Cinematic Rover Scene (Full 360° orbiting sweeps, Kerbin-in-background framing, wide angle zooms)
+global function playRoverCinematicScene {
+  parameter duration is -1.
+  if not hasCameraAddon { return. }
+  if duration <= 0 { set duration to 300. } // Default 5 minutes of continuous cinematic cuts
+  
+  local sunH is getSunHeading().
+  local kerbinH is getKerbinHeading().
+  // Camera heading looking PAST the rover toward Kerbin
+  local kerbinBgH is kerbinH + 180.
+
+  local cutTime is duration / 5.
+
+  startCameraScene(list(
+    // Cut 1: Kerbin Background Framing — Low-angle wide-zoom shot with Kerbin/Sky in background
+    lexicon("duration", cutTime, "startH", kerbinBgH - 45, "endH", kerbinBgH + 45, "startP", 8, "endP", 14, "startD", 35, "endD", 18),
+
+    // Cut 2: Full 360° Continuous Orbiting Sweep — Slowly circles around the rover
+    lexicon("duration", cutTime * 1.5, "startH", sunH, "endH", sunH + 360, "startP", 15, "endP", 22, "startD", 20, "endD", 28),
+
+    // Cut 3: Ultra-Wide Horizon & Terrain Sweep — Long cinematic zoom-out showing landscape
+    lexicon("duration", cutTime, "startH", sunH + 90, "endH", sunH + 210, "startP", 10, "endP", 25, "startD", 15, "endD", 65),
+
+    // Cut 4: Low-Angle Wheel & Track Pass — Close ground level sweep as rover drives/explores
+    lexicon("duration", cutTime, "startH", sunH - 120, "endH", sunH - 30, "startP", 5, "endP", 12, "startD", 12, "endD", 25),
+
+    // Cut 5: High Satellite Observer View — High-angle bird's eye orbit
+    lexicon("duration", cutTime * 0.5, "startH", kerbinBgH + 30, "endH", kerbinBgH - 30, "startP", 45, "endP", 30, "startD", 50, "endD", 30)
+  )).
+}
+
 // Stop current scene and release camera to manual control
 global function stopCameraScene {
   if not hasCameraAddon { return. }
