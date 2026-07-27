@@ -64,28 +64,43 @@ global function getECInfo {
   return list(curEC, maxEC).
 }
 
-// Long-Range Terrain Radar: Scans slope and elevation delta at specified distance and angle offset
+// Multi-Point Terrain Radar: Scans slope and elevation delta at 25m, 50m, 75m, and 100m lookahead intervals
 global function scanSlopeAhead {
   parameter angleOffset is 0. // Offset angle in degrees relative to current heading
-  parameter lookDist is 100.   // Lookahead distance in meters
+  parameter maxLookDist is 100. // Maximum lookahead distance in meters
 
   local currentGeo is ship:geoposition.
   local testHeading is mod(ship:heading + angleOffset + 360, 360).
   local testDirVec is heading(testHeading, 0):vector.
   
-  local aheadGeoPos is ship:body:geopositionof(ship:position + testDirVec * lookDist).
-  local hDiff is aheadGeoPos:terrainheight - currentGeo:terrainheight.
-  local aheadSlope is arctan2(hDiff, lookDist).
+  local worstSlope is 0.
+  local worstHDiff is 0.
+  local worstGeoPos is currentGeo.
+
+  // Multi-point raycast sampling along beam to catch drop-offs/ridges between 0m and 100m
+  local sampleDistances is list(25, 50, 75, maxLookDist).
+  for d in sampleDistances {
+    local ptGeo is ship:body:geopositionof(ship:position + testDirVec * d).
+    local hDiff is ptGeo:terrainheight - currentGeo:terrainheight.
+    local slope is arctan2(hDiff, d).
+
+    // Catch the most severe hazard (steepest climb, steepest drop-off, or maximum height jump)
+    if abs(slope) > abs(worstSlope) or abs(hDiff) > abs(worstHDiff) {
+      set worstSlope to slope.
+      set worstHDiff to hDiff.
+      set worstGeoPos to ptGeo.
+    }
+  }
   
-  return list(aheadSlope, hDiff, aheadGeoPos).
+  return list(worstSlope, worstHDiff, worstGeoPos).
 }
 
+// Toggles vessel-wide hibernation mode (probe core hibernation, torque cutoff, wheel motor cutoff, light dimming)
 // Toggles vessel-wide hibernation mode (probe core hibernation, torque cutoff, wheel motor cutoff, light dimming)
 global function setHibernation {
   parameter enable.
   
   if enable {
-    hudText("HIBERNATION: Powering down probe core, torque & wheel motors...", 4, 2, 25, rgb(0.8, 0.4, 1.0), false).
     lights off.
     sas off.
     brakes on.
@@ -157,7 +172,6 @@ global function setHibernation {
     
     sas on.
     lights on.
-    hudText("Waking systems from hibernation!", 4, 2, 20, rgb(0.2, 1.0, 0.4), false).
   }
 }
 
@@ -165,7 +179,6 @@ global function setHibernation {
 global function recoverFromFlip {
   local currentTilt is vAng(ship:up:vector, ship:facing:topvector).
   if currentTilt > 45 {
-    hudText("WARNING: Rover flip detected! Attempting auto-upright...", 5, 2, 25, rgb(1, 0.2, 0.2), false).
     brakes on.
     set targetThrottle to 0.
     unlock wheelsteering.
@@ -189,7 +202,6 @@ global function recoverFromFlip {
 // Mid-Air Jump Stabilizer: Levels reaction wheels while airborne for safe 4-wheel touchdown
 global function handleAirborne {
   if not (ship:status = "LANDED" or ship:status = "SPLASHED") {
-    hudText("AIRBORNE JUMP DETECTED! Aligning wheels for touchdown...", 4, 2, 25, rgb(1, 0.5, 0.0), false).
     brakes off. // Allow wheels to rotate freely on landing impact
     set targetThrottle to 0.
     sas on.
@@ -206,7 +218,6 @@ global function handleAirborne {
 
     set ship:control:neutral to true.
     brakes on.
-    hudText("TOUCHDOWN! Rover stabilized.", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
     wait 0.5.
     brakes off.
   }
@@ -214,7 +225,6 @@ global function handleAirborne {
 
 // Executes a 60-degree detour around crater rims / steep ridge drop-offs
 global function executeRidgeDetour {
-  hudText("CLIFF DETECTED: Executing 60-deg ridge detour...", 4, 2, 25, rgb(1, 0.5, 0.0), false).
   brakes on.
   set targetThrottle to 0.
   unlock wheelsteering.
@@ -237,8 +247,6 @@ global function executeRidgeDetour {
   local detourHeadingVector is heading(detourHDG, 0):vector.
   local detourGeo is ship:body:geopositionof(ship:position + detourHeadingVector * 45).
 
-  hudText("Routing around crater rim...", 3, 2, 20, rgb(0.2, 0.8, 1.0), false).
-
   // 3. Drive 45 meters along detour path around the rim
   brakes off.
   local localThrottle is 0.
@@ -259,13 +267,12 @@ global function executeRidgeDetour {
   brakes on.
   lock wheelthrottle to 0.
   wait 0.5.
-  hudText("Detour complete: Resuming waypoint navigation.", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
+  brakes off.
 }
 
 // Suspends movement and operations when the sun is down with automatic high-speed timewarp and vessel hibernation
 global function waitForSunlight {
   if not isSunUp() {
-    hudText("NIGHTTIME DETECTED: Suspending movement & entering hibernation...", 5, 2, 25, rgb(1, 0.5, 0.0), false).
     brakes on.
     set targetThrottle to 0.
     unlock wheelsteering.
@@ -328,7 +335,6 @@ global function waitForFullEC {
   if maxEC <= 0 { return. }
   
   if (curEC / maxEC) < 0.95 {
-    hudText("Charging batteries (High-Speed Auto-Warp)...", 4, 2, 20, rgb(1, 0.8, 0.2), false).
     brakes on.
     set targetThrottle to 0.
     unlock wheelsteering.
@@ -401,7 +407,6 @@ global function waitForFullEC {
 
     print "                                                                " at (0, 7).
     print "                                                                " at (0, 8).
-    hudText("Batteries fully charged!", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
   }
 }
 
@@ -458,8 +463,6 @@ global function driveToCoordinates {
 
   local targetGeo is latlng(targetLat, targetLng).
   
-  hudText("Heading to waypoint: Lat " + round(targetLat, 4) + ", Lng " + round(targetLng, 4), 3, 2, 20, rgb(0.2, 0.8, 0.2), false).
-  
   brakes off.
   
   // Enable SAS to help stabilize reaction wheel anti-roll
@@ -482,7 +485,6 @@ global function driveToCoordinates {
     // Low battery (15%) emergency check during driving
     local ecCheck is getECInfo().
     if ecCheck[1] > 0 and (ecCheck[0] / ecCheck[1]) < 0.15 {
-      hudText("LOW BATTERY (15%): Pausing drive to recharge...", 4, 2, 20, rgb(1, 0.5, 0.0), false).
       brakes on.
       set targetThrottle to 0.
       unlock wheelsteering.
@@ -509,7 +511,6 @@ global function driveToCoordinates {
     // Check for Biome boundary crossings during drive
     local currentBiome is getCurrentBiome().
     if autoCollectBiomes and lastScienceBiome <> "" and currentBiome <> lastScienceBiome {
-      hudText("NEW BIOME ENTERED: " + currentBiome:toUpper() + "!", 4, 2, 20, rgb(0.2, 1.0, 0.4), false).
       brakes on.
       set targetThrottle to 0.
       unlock wheelsteering.
@@ -539,7 +540,6 @@ global function driveToCoordinates {
       set targetThrottle to 0.
       unlock wheelsteering.
       unlock wheelthrottle.
-      hudText("Arrived at waypoint!", 3, 2, 20, rgb(0.2, 0.8, 0.2), false).
       break.
     }
     
@@ -551,7 +551,6 @@ global function driveToCoordinates {
       set targetThrottle to 0.
       unlock wheelsteering.
       unlock wheelthrottle.
-      hudText("WAYPOINT INACCESSIBLE (" + detourCount + " detours / Best: " + round(minDistToTarget, 1) + "m). Declaring new target!", 5, 2, 25, rgb(0.2, 1.0, 0.4), false).
       wait until ship:groundspeed < 0.2.
       runScienceExperiments().
       break.
@@ -585,20 +584,20 @@ global function driveToCoordinates {
       brakes on.
       local stopStart1 is time:seconds.
       until ship:groundspeed < 0.15 or (time:seconds - stopStart1 > 1.8) {
-        updateRoverTelemetry(targetGeo, "Braking to full stop...").
+        updateRoverTelemetry(targetGeo, "Crater/Ridge ahead! Braking...").
         wait 0.1.
       }
       wait 0.2.
 
-      // 2. DETOUR EVASION LOOP
+      // 2. TANGENTIAL RIM-BYPASS EVASION LOOP
       until false {
-        // Probe Left (-30 deg) and Right (+30 deg) slope alternatives to pick search side
-        local scanRight is scanSlopeAhead(30, 100).
-        local scanLeft is scanSlopeAhead(-30, 100).
+        // Probe Left (-45 deg) and Right (+45 deg) slope alternatives to pick rim tangent direction
+        local scanRight is scanSlopeAhead(45, 100).
+        local scanLeft is scanSlopeAhead(-45, 100).
         
-        local searchSign is 1. // Default right (+30 deg)
+        local searchSign is 1. // Default right (+60 deg tangent)
         if abs(scanLeft[0]) < abs(scanRight[0]) {
-          set searchSign to -1. // Prefer left (-30 deg) if flatter
+          set searchSign to -1. // Prefer left (-60 deg tangent) if flatter
         }
 
         local baseHDG is ship:heading.
@@ -606,43 +605,37 @@ global function driveToCoordinates {
         local clearAngleOffset is 0.
         local clearFound is false.
 
-        // 30-Degree Incremental Virtual Raycast Scan Loop (no physical stationary turning needed)
+        // Virtual Raycast Scan Loop for Rim Tangent Heading (testing 45°, 60°, 75°, 90°)
         until clearFound {
-          set clearAngleOffset to currentStep * 30 * searchSign.
-          if abs(clearAngleOffset) > 150 {
-            // Swap side if preferred side blocked up to 150 deg
+          set clearAngleOffset to (30 + currentStep * 15) * searchSign.
+          if abs(clearAngleOffset) > 120 {
             if searchSign = 1 {
               set searchSign to -1.
               set currentStep to 1.
-              set clearAngleOffset to currentStep * 30 * searchSign.
+              set clearAngleOffset to (30 + currentStep * 15) * searchSign.
             } else {
-              set clearAngleOffset to 90 * searchSign.
+              set clearAngleOffset to 75 * searchSign.
               set clearFound to true.
               break.
             }
           }
 
-          // Raycast scan 100m ahead at virtual angle offset relative to baseHDG
+          // Raycast scan 100m ahead at virtual tangent angle offset relative to baseHDG
           local testScan is scanSlopeAhead(clearAngleOffset, 100).
           if testScan[0] > 12 or testScan[0] < -10 or abs(testScan[1]) > 8 {
-            // Still encountering ridge at this angle! Increment another 30 deg
-            hudText("Ridge detected at " + round(clearAngleOffset) + " deg! Testing next 30 deg...", 3, 2, 20, rgb(1, 0.5, 0.0), false).
+            updateRoverTelemetry(targetGeo, "Scanning rim tangent at " + round(clearAngleOffset) + " deg...").
             set currentStep to currentStep + 1.
           } else {
-            // Clear direction found!
-            hudText("Clear path found at " + round(clearAngleOffset) + " deg off-axis!", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
+            updateRoverTelemetry(targetGeo, "Clear rim tangent at " + round(clearAngleOffset) + " deg!").
             set clearFound to true.
           }
-          updateRoverTelemetry(targetGeo, "Scanning at " + round(clearAngleOffset) + " deg").
           wait 0.1.
         }
 
-        // 3. DRIVE FORWARD 90 METERS ALONG CLEAR HEADING
+        // 3. DRIVE 250-METER CONTINUOUS TANGENT RIM ARC
         local clearHDG is mod(baseHDG + clearAngleOffset + 360, 360).
-        hudText("Steering " + round(clearAngleOffset) + " deg (" + round(clearHDG) + " deg hdg) for 90m...", 3, 2, 20, rgb(0.2, 0.8, 1.0), false).
-        
         local clearDirVec is heading(clearHDG, 0):vector.
-        local detourGeo is ship:body:geopositionof(ship:position + clearDirVec * 90).
+        local detourGeo is ship:body:geopositionof(ship:position + clearDirVec * 250).
 
         brakes off.
         local detourThrottle is 0.
@@ -650,7 +643,7 @@ global function driveToCoordinates {
         lock wheelthrottle to detourThrottle.
 
         local legStart is time:seconds.
-        until (time:seconds - legStart > 22) or (detourGeo:distance < 12) {
+        until (time:seconds - legStart > 55) or (detourGeo:distance < 15) {
           if not (ship:status = "LANDED") { handleAirborne(). }
           local curSpd is ship:groundspeed.
           if curSpd < 4.5 {
@@ -659,7 +652,7 @@ global function driveToCoordinates {
             set detourThrottle to 0.
           }
           local legLeft is round(detourGeo:distance, 1).
-          updateRoverTelemetry(targetGeo, "Detour Leg: " + legLeft + "m left").
+          updateRoverTelemetry(targetGeo, "Rim Bypass Arc: " + legLeft + "m left").
           wait 0.1.
         }
 
@@ -669,12 +662,11 @@ global function driveToCoordinates {
         lock wheelthrottle to targetThrottle.
         local stopStart2 is time:seconds.
         until ship:groundspeed < 0.15 or (time:seconds - stopStart2 > 1.8) {
-          updateRoverTelemetry(targetGeo, "Braking post-detour...").
+          updateRoverTelemetry(targetGeo, "Braking post-bypass arc...").
           wait 0.1.
         }
         wait 0.2.
 
-        hudText("90m detour complete. Turning toward target...", 3, 2, 20, rgb(0.2, 0.8, 1.0), false).
         brakes off.
         lock wheelsteering to targetGeo.
         local targetTurnStart is time:seconds.
@@ -686,7 +678,7 @@ global function driveToCoordinates {
         brakes on.
         local stopStart3 is time:seconds.
         until ship:groundspeed < 0.15 or (time:seconds - stopStart3 > 1.8) {
-          updateRoverTelemetry(targetGeo, "Stopping to recheck...").
+          updateRoverTelemetry(targetGeo, "Stopping to recheck target...").
           wait 0.1.
         }
         wait 0.2.
@@ -695,18 +687,17 @@ global function driveToCoordinates {
         local recheckScan is scanSlopeAhead(0, 100).
         if recheckScan[0] > 12 or recheckScan[0] < -10 or abs(recheckScan[1]) > 8 {
           // Obstacle still present towards target! Re-initiate evasion sequence facing target ridge
-          hudText("Ridge detected ahead toward target! Re-initiating evasion...", 4, 2, 25, rgb(1, 0.5, 0.0), false).
           local facingTargetHDG is ship:heading.
           lock wheelsteering to facingTargetHDG.
           local stopStart4 is time:seconds.
           until ship:groundspeed < 0.15 or (time:seconds - stopStart4 > 1.8) {
-            updateRoverTelemetry(targetGeo, "Braking facing target ridge...").
+            updateRoverTelemetry(targetGeo, "Crater persists! Re-initiating bypass...").
             wait 0.1.
           }
           wait 0.2.
         } else {
           // Target path is clear! Resume normal driving to target
-          hudText("Target path clear! Resuming drive to target.", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
+          updateRoverTelemetry(targetGeo, "Target path clear! Resuming...").
           brakes off.
           lock wheelsteering to targetGeo.
           lock wheelthrottle to targetThrottle.
@@ -757,7 +748,7 @@ global function runScienceExperiments {
 
   set lastScienceBiome to getCurrentBiome().
 
-  hudText("Deploying science suite (" + lastScienceBiome + ")...", 3, 2, 20, rgb(0.2, 0.6, 1.0), false).
+  print "Deploying science suite (" + lastScienceBiome + ")..." at (0, 14).
 
   local experimentsList is list().
   for p in ship:parts {
@@ -811,7 +802,7 @@ global function runScienceExperiments {
   // reset/dump the sensor so individual parts are cleared for the next waypoint.
   for exp in experimentsList {
     if exp:hasdata {
-      hudText("Out of Comms Range: Clearing sensor for next waypoint...", 3, 2, 20, rgb(1, 0.6, 0.0), false).
+      print "Out of Comms Range: Clearing sensor for next waypoint..." at (0, 14).
       if exp:hasevent("reset experiment") {
         exp:doEvent("reset experiment").
       } else if exp:hasevent("reset") {
@@ -826,5 +817,5 @@ global function runScienceExperiments {
     }
   }
   
-  hudText("Science processed for: " + lastScienceBiome, 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
+  print "Science processed for: " + lastScienceBiome at (0, 14).
 }

@@ -40,14 +40,27 @@ local currentOffsetN is 0.
 local currentOffsetE is 0.
 
 until false {
-  // Step size: 2,500m to 4,500m per waypoint to traverse across biomes
-  local stepN is (random() * 4000) - 2000.
-  local stepE is (random() * 4000) - 2000.
+  // Generate candidate waypoint coordinates with terrain safety check
+  local nextWp is list().
+  local attempts is 0.
+  until attempts >= 10 {
+    local stepN is (random() * 2000) - 1000.
+    local stepE is (random() * 2000) - 1000.
+    
+    local candN is currentOffsetN + stepN.
+    local candE is currentOffsetE + stepE.
+    set nextWp to getOffsetCoordinates(candN, candE).
+    
+    // Terrain height check: avoid targeting deep crater interiors
+    local candGeo is latlng(nextWp[0], nextWp[1]).
+    if candGeo:terrainheight > 50 {
+      set currentOffsetN to candN.
+      set currentOffsetE to candE.
+      break.
+    }
+    set attempts to attempts + 1.
+  }
   
-  set currentOffsetN to currentOffsetN + stepN.
-  set currentOffsetE to currentOffsetE + stepE.
-  
-  local nextWp is getOffsetCoordinates(currentOffsetN, currentOffsetE).
   local distFromStart is sqrt(currentOffsetN^2 + currentOffsetE^2).
   
   clearScreen.
