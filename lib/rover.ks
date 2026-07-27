@@ -540,6 +540,8 @@ global function driveToCoordinates {
       set targetThrottle to 0.
       unlock wheelsteering.
       unlock wheelthrottle.
+      wait until ship:groundspeed < 0.2.
+      runScienceExperiments().
       break.
     }
     

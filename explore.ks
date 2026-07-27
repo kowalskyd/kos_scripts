@@ -78,7 +78,8 @@ until false {
   // (Auto-collects science whenever crossing into a NEW biome during transit)
   driveToCoordinates(nextWp[0], nextWp[1], 8, 15, true).
   
-  // Arrived at waypoint
+  // Arrived at waypoint - deploy & transmit science suite
+  runScienceExperiments().
   wait 1.
   waitForFullEC().
   

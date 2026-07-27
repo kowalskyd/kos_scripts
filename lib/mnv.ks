@@ -412,11 +412,15 @@ function setNewPeriapsis {
   local correctNode is node(time:seconds + newTime, 0, 0, 0).
   add correctNode.
 
-  // Safe periapsis reader that won't crash if next patch disappears
+  // Safe periapsis reader that won't crash if next patch disappears or targets wrong body
   local function getPe {
     if doNextPatch {
       if correctNode:orbit:hasnextpatch {
-        return correctNode:orbit:nextpatch:periapsis.
+        local np is correctNode:orbit:nextpatch.
+        if hasTarget and target:istype("Body") {
+          if np:body <> target { return -1. }
+        }
+        return np:periapsis.
       } else {
         return -1. // Signal: no encounter exists
       }
@@ -447,11 +451,19 @@ function setNewPeriapsis {
     return abs(wantedPeriapsis - pe).
   }
 
+  local maxStep is 3.0.
+  local stepSize is deltaChange.
+
+  // Dynamically scale step size and max step for distant targets like Minmus (SMA > 20,000 km)
+  if hasTarget and target:istype("Body") and target:orbit:semimajoraxis > 20000000 {
+    set stepSize to min(stepSize, 0.1).
+    set maxStep to 0.5.
+  }
+
   local iterations is 0.
   local maxIterations is 2000.
-  local stepSize is 1.0.
 
-  until abs(oldPeriapsis - wantedPeriapsis) <= marginValue or iterations >= maxIterations or stepSize < 0.001 {
+  until abs(oldPeriapsis - wantedPeriapsis) <= marginValue or iterations >= maxIterations or stepSize < 0.0001 {
     local currentError is getError().
     local errors is list().
 
@@ -482,9 +494,9 @@ function setNewPeriapsis {
       else if bestIndex = 5 {changeRetrograde(correctNode, stepSize).}
       
       set oldPeriapsis to getPe().
-      set stepSize to min(5.0, stepSize * 1.2). // Accelerate when successful
+      set stepSize to min(maxStep, stepSize * 1.2).
     } else {
-      set stepSize to stepSize / 2. // Backtrack step size if no direction improves error
+      set stepSize to stepSize / 2.
     }
 
     // If encounter was lost during solving, bail out
@@ -535,11 +547,15 @@ function setNewInclination {
   local correctNode is node(time:seconds + newTime, 0, 0, 0).
   add correctNode.
   
-  // Safe inclination reader that won't crash if next patch disappears
+  // Safe inclination reader that won't crash if next patch disappears or targets wrong body
   local function getInc {
     if doNextPatch {
       if correctNode:orbit:hasnextpatch {
-        return correctNode:orbit:nextpatch:inclination.
+        local np is correctNode:orbit:nextpatch.
+        if hasTarget and target:istype("Body") {
+          if np:body <> target { return -1. }
+        }
+        return np:inclination.
       } else {
         return -1.
       }
