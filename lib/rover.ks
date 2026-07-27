@@ -93,6 +93,7 @@ global function setHibernation {
     // Unlock steering & throttle so wheel motors release power draw
     unlock wheelsteering.
     unlock wheelthrottle.
+    set ship:control:neutral to true.
     set ship:control:pilotmainthrottle to 0.
 
     for p in ship:parts {
@@ -100,6 +101,8 @@ global function setHibernation {
         local rw is p:getModule("ModuleReactionWheel").
         if rw:hasevent("toggle wheel state") {
           rw:setField("wheel state", "Disabled").
+        } else if rw:hasaction("toggle wheel state") {
+          rw:doAction("toggle wheel state", true).
         }
       }
       
@@ -116,6 +119,8 @@ global function setHibernation {
         local m is p:getModule("ModuleWheelMotor").
         if m:hasevent("disable motor") {
           m:doEvent("disable motor").
+        } else if m:hasaction("disable motor") {
+          m:doAction("disable motor", true).
         }
       }
     }
@@ -135,6 +140,8 @@ global function setHibernation {
         local rw is p:getModule("ModuleReactionWheel").
         if rw:hasevent("toggle wheel state") {
           rw:setField("wheel state", "Normal").
+        } else if rw:hasaction("toggle wheel state") {
+          rw:doAction("toggle wheel state", true).
         }
       }
 
@@ -142,6 +149,8 @@ global function setHibernation {
         local m is p:getModule("ModuleWheelMotor").
         if m:hasevent("enable motor") {
           m:doEvent("enable motor").
+        } else if m:hasaction("enable motor") {
+          m:doAction("enable motor", true).
         }
       }
     }
@@ -261,12 +270,15 @@ global function waitForSunlight {
     set targetThrottle to 0.
     unlock wheelsteering.
     unlock wheelthrottle.
-    wait until ship:groundspeed < 0.05. // Ensure rover is completely stationary before timewarp
-
-    // Engage vessel-wide hibernation mode
+    
+    // Engage vessel-wide hibernation mode immediately
     setHibernation(true).
 
-    // Switch to RAILS timewarp for high-speed warp across the night
+    local waitStart is time:seconds.
+    until ship:groundspeed < 0.1 or (time:seconds - waitStart > 3) {
+      wait 0.1.
+    }
+
     set kuniverse:timewarp:mode to "RAILS".
     wait 0.2.
 
@@ -321,20 +333,30 @@ global function waitForFullEC {
     set targetThrottle to 0.
     unlock wheelsteering.
     unlock wheelthrottle.
-    wait until ship:groundspeed < 0.05.
 
     if not isSunUp() {
       waitForSunlight().
     }
 
-    // Engage zero-power hibernation mode during battery charging
+    // Engage zero-power hibernation mode immediately
     setHibernation(true).
+
+    local waitStart is time:seconds.
+    until ship:groundspeed < 0.1 or (time:seconds - waitStart > 3) {
+      wait 0.1.
+    }
 
     set kuniverse:timewarp:mode to "RAILS".
     wait 0.2.
 
     if kuniverse:timewarp:issettled {
       set kuniverse:timewarp:warp to 4. // 100x high-speed warp
+    } else {
+      set kuniverse:timewarp:mode to "PHYSICS".
+      wait 0.2.
+      if kuniverse:timewarp:issettled {
+        set kuniverse:timewarp:warp to 3. // 4x physics warp fallback if sliding on slope
+      }
     }
 
     until false {
@@ -354,8 +376,12 @@ global function waitForFullEC {
         setHibernation(true).
       }
 
-      if kuniverse:timewarp:issettled and kuniverse:timewarp:warp < 4 {
-        set kuniverse:timewarp:warp to 4.
+      if kuniverse:timewarp:issettled {
+        if kuniverse:timewarp:mode = "RAILS" and kuniverse:timewarp:warp < 4 {
+          set kuniverse:timewarp:warp to 4.
+        } else if kuniverse:timewarp:mode = "PHYSICS" and kuniverse:timewarp:warp < 3 {
+          set kuniverse:timewarp:warp to 3.
+        }
       }
 
       local ecPct is 100.
@@ -518,14 +544,14 @@ global function driveToCoordinates {
     }
     
     // Arrival Condition 2: Best-Approach Acceptance (Inaccessible Waypoint)
-    // If target sits in a crater/cliff and we cannot get closer than ~250m after 40s or 3 detours
+    // If target is blocked by terrain (5 detours) or progress is stagnant
     local timeStagnant is time:seconds - timeOfBestDist.
-    if (dist < 300 or minDistToTarget < 300) and (timeStagnant > 40 or detourCount >= 3) {
+    if detourCount >= 5 or (timeStagnant > 60 and dist < 400) or ((dist < 300 or minDistToTarget < 300) and timeStagnant > 40) {
       brakes on.
       set targetThrottle to 0.
       unlock wheelsteering.
       unlock wheelthrottle.
-      hudText("WAYPOINT INACCESSIBLE (Best Approach: " + round(minDistToTarget, 1) + "m). Gathering science here!", 5, 2, 25, rgb(0.2, 1.0, 0.4), false).
+      hudText("WAYPOINT INACCESSIBLE (" + detourCount + " detours / Best: " + round(minDistToTarget, 1) + "m). Declaring new target!", 5, 2, 25, rgb(0.2, 1.0, 0.4), false).
       wait until ship:groundspeed < 0.2.
       runScienceExperiments().
       break.
@@ -539,13 +565,6 @@ global function driveToCoordinates {
     // Check for flip / rollover hazard
     if currentTilt > 45 {
       recoverFromFlip().
-    } else if abs(currentPitch) > 22 or currentTilt > 22 {
-      // Steep incline hazard: slow down / stop until settled
-      brakes on.
-      set targetThrottle to 0.
-      hudText("STEEP INCLINE: Regulating speed for safety...", 3, 2, 20, rgb(1, 0.5, 0.0), false).
-      wait until abs(90 - vAng(ship:up:vector, ship:facing:forevector)) <= 18 and vAng(ship:up:vector, ship:facing:topvector) <= 18.
-      brakes off.
     }
 
     // Long-Range 100-Meter Raycast Terrain Scanner
@@ -564,11 +583,12 @@ global function driveToCoordinates {
       set targetThrottle to 0.
       lock wheelthrottle to targetThrottle.
       brakes on.
-      until ship:groundspeed < 0.1 {
+      local stopStart1 is time:seconds.
+      until ship:groundspeed < 0.15 or (time:seconds - stopStart1 > 1.8) {
         updateRoverTelemetry(targetGeo, "Braking to full stop...").
         wait 0.1.
       }
-      wait 0.5.
+      wait 0.2.
 
       // 2. DETOUR EVASION LOOP
       until false {
@@ -647,27 +667,29 @@ global function driveToCoordinates {
         brakes on.
         set targetThrottle to 0.
         lock wheelthrottle to targetThrottle.
-        until ship:groundspeed < 0.1 {
+        local stopStart2 is time:seconds.
+        until ship:groundspeed < 0.15 or (time:seconds - stopStart2 > 1.8) {
           updateRoverTelemetry(targetGeo, "Braking post-detour...").
           wait 0.1.
         }
-        wait 0.5.
+        wait 0.2.
 
         hudText("90m detour complete. Turning toward target...", 3, 2, 20, rgb(0.2, 0.8, 1.0), false).
         brakes off.
         lock wheelsteering to targetGeo.
         local targetTurnStart is time:seconds.
-        until abs(targetGeo:bearing) < 5 or (time:seconds - targetTurnStart > 8) {
+        until abs(targetGeo:bearing) < 6 or (time:seconds - targetTurnStart > 5) {
           updateRoverTelemetry(targetGeo, "Turning to target...").
           wait 0.1.
         }
 
         brakes on.
-        until ship:groundspeed < 0.1 {
+        local stopStart3 is time:seconds.
+        until ship:groundspeed < 0.15 or (time:seconds - stopStart3 > 1.8) {
           updateRoverTelemetry(targetGeo, "Stopping to recheck...").
           wait 0.1.
         }
-        wait 0.5.
+        wait 0.2.
 
         // 5. RE-CHECK IF RIDGE AHEAD TOWARDS TARGET
         local recheckScan is scanSlopeAhead(0, 100).
@@ -676,11 +698,12 @@ global function driveToCoordinates {
           hudText("Ridge detected ahead toward target! Re-initiating evasion...", 4, 2, 25, rgb(1, 0.5, 0.0), false).
           local facingTargetHDG is ship:heading.
           lock wheelsteering to facingTargetHDG.
-          until ship:groundspeed < 0.1 {
+          local stopStart4 is time:seconds.
+          until ship:groundspeed < 0.15 or (time:seconds - stopStart4 > 1.8) {
             updateRoverTelemetry(targetGeo, "Braking facing target ridge...").
             wait 0.1.
           }
-          wait 0.5.
+          wait 0.2.
         } else {
           // Target path is clear! Resume normal driving to target
           hudText("Target path clear! Resuming drive to target.", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
