@@ -379,6 +379,39 @@ global function waitForFullEC {
   }
 }
 
+// Dedicated continuous telemetry HUD display helper
+global function updateRoverTelemetry {
+  parameter targetGeo.
+  parameter statusMsg is "".
+
+  local curSpd is ship:groundspeed.
+  local currentBiome is getCurrentBiome().
+  local dist is targetGeo:distance.
+  local scanCenter is scanSlopeAhead(0, 100).
+  local aheadSlope is scanCenter[0].
+  local currentPitch is 90 - vAng(ship:up:vector, ship:facing:forevector).
+  local currentTilt is vAng(ship:up:vector, ship:facing:topvector).
+
+  local ecData is getECInfo().
+  local ecCur is ecData[0].
+  local ecMax is ecData[1].
+  local ecPct is 100.
+  if ecMax > 0 { set ecPct to round((ecCur / ecMax) * 100). }
+
+  print "--- Rover Telemetry ---" at (0, 7).
+  print "Biome:       " + padRight(currentBiome, 30) at (0, 8).
+  print "Target Dist: " + padRight(round(dist, 1) + " m", 30) at (0, 9).
+  print "Speed:       " + padRight(round(curSpd, 1) + " m/s", 30) at (0, 10).
+  print "100m Slope:  " + padRight(round(aheadSlope, 1) + " deg", 30) at (0, 11).
+  print "Pitch/Tilt:  " + padRight(round(currentPitch, 1) + " / " + round(currentTilt, 1) + " deg", 30) at (0, 12).
+  print "E.Charge:    " + padRight(round(ecCur) + "/" + round(ecMax) + " (" + ecPct + "%)", 30) at (0, 13).
+  if statusMsg <> "" {
+    print "Status:      " + padRight(statusMsg, 35) at (0, 14).
+  } else {
+    print "                                                                " at (0, 14).
+  }
+}
+
 global function driveToCoordinates {
   parameter targetLat.
   parameter targetLng.
@@ -523,61 +556,140 @@ global function driveToCoordinates {
     // Detect steep climb (>12 deg) or steep drop-off/cliff (< -10 deg) or > 8m height jump 100m ahead
     if aheadSlope > 12 or aheadSlope < -10 or abs(hDiff) > 8 {
       set detourCount to detourCount + 1.
-      hudText("OBSTACLE 100M AHEAD (Slope " + round(aheadSlope, 1) + " deg)! Full stop for 30-deg detour...", 4, 2, 25, rgb(1, 0.5, 0.0), false).
+      hudText("RIDGE DETECTED (Slope " + round(aheadSlope, 1) + " deg)! Braking straight ahead...", 4, 2, 25, rgb(1, 0.5, 0.0), false).
       
-      // FULL STOP BRAKING before executing detour turn
-      brakes on.
+      // 1. STRAIGHT-LINE BRAKING: Lock steering to current facing heading during braking to avoid off-course drift
+      local facingHDG is ship:heading.
+      lock wheelsteering to facingHDG.
       set targetThrottle to 0.
-      unlock wheelsteering.
-      unlock wheelthrottle.
-      wait until ship:groundspeed < 0.2.
-      wait 0.5.
-
-      // Probe Left (-30 deg) and Right (+30 deg) slope alternatives 100m ahead
-      local scanRight is scanSlopeAhead(30, 100).
-      local scanLeft is scanSlopeAhead(-30, 100).
-      
-      local absSlopeRight is abs(scanRight[0]).
-      local absSlopeLeft is abs(scanLeft[0]).
-
-      // Pick flatter side for detour
-      local detourOffset is 30.
-      if absSlopeLeft < absSlopeRight {
-        set detourOffset to -30.
-      }
-
-      local detourHDG is mod(ship:heading + detourOffset + 360, 360).
-      local detourDirVec is heading(detourHDG, 0):vector.
-      local detourGeo is ship:body:geopositionof(ship:position + detourDirVec * 90).
-
-      hudText("Steering " + round(detourOffset) + " deg detour around obstacle for 90m...", 3, 2, 20, rgb(0.2, 0.8, 1.0), false).
-
-      // Execute 90-meter detour leg in chosen direction
-      brakes off.
-      local detourThrottle is 0.
-      lock wheelsteering to detourGeo.
-      lock wheelthrottle to detourThrottle.
-
-      local legStart is time:seconds.
-      until (time:seconds - legStart > 18) or (detourGeo:distance < 15) {
-        if not (ship:status = "LANDED") { handleAirborne(). }
-        local curSpd is ship:groundspeed.
-        if curSpd < 4.5 {
-          set detourThrottle to 0.4.
-        } else {
-          set detourThrottle to 0.
-        }
+      lock wheelthrottle to targetThrottle.
+      brakes on.
+      until ship:groundspeed < 0.1 {
+        updateRoverTelemetry(targetGeo, "Braking to full stop...").
         wait 0.1.
       }
-
-      brakes on.
-      set targetThrottle to 0.
       wait 0.5.
-      brakes off.
 
-      hudText("Detour leg complete. Re-probing target path...", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
-      lock wheelsteering to targetGeo.
-      lock wheelthrottle to targetThrottle.
+      // 2. DETOUR EVASION LOOP
+      until false {
+        // Probe Left (-30 deg) and Right (+30 deg) slope alternatives to pick search side
+        local scanRight is scanSlopeAhead(30, 100).
+        local scanLeft is scanSlopeAhead(-30, 100).
+        
+        local searchSign is 1. // Default right (+30 deg)
+        if abs(scanLeft[0]) < abs(scanRight[0]) {
+          set searchSign to -1. // Prefer left (-30 deg) if flatter
+        }
+
+        local baseHDG is ship:heading.
+        local currentStep is 1.
+        local clearAngleOffset is 0.
+        local clearFound is false.
+
+        // 30-Degree Incremental Virtual Raycast Scan Loop (no physical stationary turning needed)
+        until clearFound {
+          set clearAngleOffset to currentStep * 30 * searchSign.
+          if abs(clearAngleOffset) > 150 {
+            // Swap side if preferred side blocked up to 150 deg
+            if searchSign = 1 {
+              set searchSign to -1.
+              set currentStep to 1.
+              set clearAngleOffset to currentStep * 30 * searchSign.
+            } else {
+              set clearAngleOffset to 90 * searchSign.
+              set clearFound to true.
+              break.
+            }
+          }
+
+          // Raycast scan 100m ahead at virtual angle offset relative to baseHDG
+          local testScan is scanSlopeAhead(clearAngleOffset, 100).
+          if testScan[0] > 12 or testScan[0] < -10 or abs(testScan[1]) > 8 {
+            // Still encountering ridge at this angle! Increment another 30 deg
+            hudText("Ridge detected at " + round(clearAngleOffset) + " deg! Testing next 30 deg...", 3, 2, 20, rgb(1, 0.5, 0.0), false).
+            set currentStep to currentStep + 1.
+          } else {
+            // Clear direction found!
+            hudText("Clear path found at " + round(clearAngleOffset) + " deg off-axis!", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
+            set clearFound to true.
+          }
+          updateRoverTelemetry(targetGeo, "Scanning at " + round(clearAngleOffset) + " deg").
+          wait 0.1.
+        }
+
+        // 3. DRIVE FORWARD 90 METERS ALONG CLEAR HEADING
+        local clearHDG is mod(baseHDG + clearAngleOffset + 360, 360).
+        hudText("Steering " + round(clearAngleOffset) + " deg (" + round(clearHDG) + " deg hdg) for 90m...", 3, 2, 20, rgb(0.2, 0.8, 1.0), false).
+        
+        local clearDirVec is heading(clearHDG, 0):vector.
+        local detourGeo is ship:body:geopositionof(ship:position + clearDirVec * 90).
+
+        brakes off.
+        local detourThrottle is 0.
+        lock wheelsteering to detourGeo.
+        lock wheelthrottle to detourThrottle.
+
+        local legStart is time:seconds.
+        until (time:seconds - legStart > 22) or (detourGeo:distance < 12) {
+          if not (ship:status = "LANDED") { handleAirborne(). }
+          local curSpd is ship:groundspeed.
+          if curSpd < 4.5 {
+            set detourThrottle to 0.4.
+          } else {
+            set detourThrottle to 0.
+          }
+          local legLeft is round(detourGeo:distance, 1).
+          updateRoverTelemetry(targetGeo, "Detour Leg: " + legLeft + "m left").
+          wait 0.1.
+        }
+
+        // 4. STOP COMPLETELY AND TURN TOWARD TARGET
+        brakes on.
+        set targetThrottle to 0.
+        lock wheelthrottle to targetThrottle.
+        until ship:groundspeed < 0.1 {
+          updateRoverTelemetry(targetGeo, "Braking post-detour...").
+          wait 0.1.
+        }
+        wait 0.5.
+
+        hudText("90m detour complete. Turning toward target...", 3, 2, 20, rgb(0.2, 0.8, 1.0), false).
+        brakes off.
+        lock wheelsteering to targetGeo.
+        local targetTurnStart is time:seconds.
+        until abs(targetGeo:bearing) < 5 or (time:seconds - targetTurnStart > 8) {
+          updateRoverTelemetry(targetGeo, "Turning to target...").
+          wait 0.1.
+        }
+
+        brakes on.
+        until ship:groundspeed < 0.1 {
+          updateRoverTelemetry(targetGeo, "Stopping to recheck...").
+          wait 0.1.
+        }
+        wait 0.5.
+
+        // 5. RE-CHECK IF RIDGE AHEAD TOWARDS TARGET
+        local recheckScan is scanSlopeAhead(0, 100).
+        if recheckScan[0] > 12 or recheckScan[0] < -10 or abs(recheckScan[1]) > 8 {
+          // Obstacle still present towards target! Re-initiate evasion sequence facing target ridge
+          hudText("Ridge detected ahead toward target! Re-initiating evasion...", 4, 2, 25, rgb(1, 0.5, 0.0), false).
+          local facingTargetHDG is ship:heading.
+          lock wheelsteering to facingTargetHDG.
+          until ship:groundspeed < 0.1 {
+            updateRoverTelemetry(targetGeo, "Braking facing target ridge...").
+            wait 0.1.
+          }
+          wait 0.5.
+        } else {
+          // Target path is clear! Resume normal driving to target
+          hudText("Target path clear! Resuming drive to target.", 3, 2, 20, rgb(0.2, 1.0, 0.4), false).
+          brakes off.
+          lock wheelsteering to targetGeo.
+          lock wheelthrottle to targetThrottle.
+          break.
+        }
+      }
     }
 
     // Dynamic Pre-Turn Deceleration & Speed Governor
@@ -609,21 +721,8 @@ global function driveToCoordinates {
       set targetThrottle to 0.
     }
     
-    local ecData is getECInfo().
-    local ecCur is ecData[0].
-    local ecMax is ecData[1].
-    local ecPct is 100.
-    if ecMax > 0 { set ecPct to round((ecCur / ecMax) * 100). }
-
-    // Clean standalone telemetry display
-    print "--- Rover Telemetry ---" at (0, 7).
-    print "Biome:      " + padRight(currentBiome, 30) at (0, 8).
-    print "Distance:   " + padRight(round(dist, 1) + " m", 30) at (0, 9).
-    print "Speed:      " + padRight(round(curSpeed, 1) + " / " + round(safeSpeed, 1) + " m/s", 30) at (0, 10).
-    print "100m Slope: " + padRight(round(aheadSlope, 1) + " deg", 30) at (0, 11).
-    print "Pitch/Tilt: " + padRight(round(currentPitch, 1) + " / " + round(currentTilt, 1), 30) at (0, 12).
-    print "E.Charge:   " + padRight(round(ecCur) + "/" + round(ecMax) + " (" + ecPct + "%)", 30) at (0, 13).
-    
+    // Continuous live HUD telemetry display
+    updateRoverTelemetry(targetGeo, "Cruising to target").
     wait 0.1.
   }
 }
