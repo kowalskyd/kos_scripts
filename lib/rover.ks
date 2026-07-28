@@ -867,8 +867,7 @@ global function driveToCoordinates {
 
 // Deploy and transmit/store science experiments
 global function runScienceExperiments {
-  waitForSunlight().
-  waitForFullEC().
+  
 
   set lastScienceBiome to getCurrentBiome().
   print "Deploying science suite (" + lastScienceBiome + ")..." at (0, 14).
@@ -893,13 +892,13 @@ global function runScienceExperiments {
     if not exp:hasdata {
       exp:deploy().
       local startWait is time:seconds.
-      wait until exp:hasdata or (time:seconds - startWait > 5).
+      wait until exp:hasdata or (time:seconds - startWait > 2).
     }
     
     if exp:hasdata and commsConnected {
       exp:transmit().
       local tStart is time:seconds.
-      wait until (not exp:hasdata) or (time:seconds - tStart > 8).
+      wait until (not exp:hasdata) or (time:seconds - tStart > 4).
     }
   }
   

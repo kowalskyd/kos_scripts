@@ -13,6 +13,7 @@ wait 1.
 panels on.
 if antenna:length > 0 {
   deployAntenna().
+  print "Deploying Antenna...".
 }
 wait 1.
 
@@ -70,7 +71,7 @@ until false {
   waitForFullEC().
 
   // Drive to destination using Curiosity Autonav (Cruise speed: 4.0 m/s, Arrival radius: 12 m)
-  driveToCoordinates(nextWp[0], nextWp[1], 4.0, 12.0, true, waypointIndex, startGeo).
+  driveToCoordinates(nextWp[0], nextWp[1], 4.0, 12.0, false, waypointIndex, startGeo).
   
   // Arrived at waypoint - deploy & transmit science suite
   runScienceExperiments().
