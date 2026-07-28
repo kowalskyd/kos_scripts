@@ -130,9 +130,12 @@ global function sampleTerrainCostGrid {
       // SCANsat global macro slope check if available
       local macroSlope is getSCANsatSlope(cellGeo:lat, cellGeo:lng).
 
-      // Impassable hazard criteria: >18 deg slope climb, <-15 deg drop, micro-cliff >2.0m, or SCANsat macro slope >22 deg
+      // Micro-cliff check: Limit total elevation difference scaled by distance (e.g., max 0.25m rise per meter forward)
+      local maxAllowedHDiff is max(1.5, distTotal * 0.25).
+
+      // Impassable hazard criteria: >18 deg slope climb, <-15 deg drop, micro-cliff > maxAllowedHDiff, or SCANsat macro slope >22 deg
       local isImpassable is false.
-      if slope > 18 or slope < -15 or abs(hDiff) > 2.0 or macroSlope > 22 {
+      if slope > 18 or slope < -15 or abs(hDiff) > maxAllowedHDiff or macroSlope > 22 {
         set isImpassable to true.
       }
 
