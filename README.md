@@ -53,6 +53,7 @@ The **KAL-9000** suite provides end-to-end mission automation—from launchpad l
 - **Booster Recovery & Pad Targeting**: Trajectory bisection algorithms (`getEntryTime`) predicting entry interface positions with planetary rotation corrections, retro-propulsion, and aerodynamic steering to land first-stage boosters back at the KSC Launchpad.
 - **6-DOF Autonomous Docking**: Interactive port selection, standoff approach corridor box alignment, relative velocity dampening, and 3-axis RCS translation control loops.
 - **Dynamic Camera Automation**: Integration with `kOS-StockCamera` to execute cinematic multi-cut sequence transitions on staging events, maneuver burns, landings, and timewarp safety locks.
+- **Curiosity-Style Autonomous Rover Navigation**: Predictive DEM (Digital Elevation Model) terrain matrix pathfinding, zero-speed point turns, body surface gravity speed scaling ($g = \frac{\mu}{R^2}$), active reverse-pulse braking, roll tilt recovery, visual odometry wheel slip detection, SCANsat integration, and live 2D ASCII DEM terrain radar terminal HUD displays.
 - **Dual-Processor Support & IFE**: Terminal GUI supporting 50x24 split-screen telemetry and chatter logs on primary flight computers, paired with a dedicated In-Flight Entertainment (`ife.ks`) system featuring live ASCII orbital radar maps for secondary processors.
 
 ---
@@ -146,9 +147,9 @@ Automates boostback, atmospheric re-entry, and precision landing of reusable fir
 ### Rover Surface Exploration (`explore.ks`)
 
 Automated long-range ground exploration program operating on rover craft:
-- **Biome-Smart Navigation**: Computes long-distance cross-country waypoints (2,500m to 4,500m steps). Continuously tracks current surface biome/sector (`getCurrentBiome()`); automatically engages brakes, deploys science modules (`ModuleScienceExperiment`), transfers data to the Experiment Storage Unit (`ModuleScienceContainer`), resets sensors, and resumes driving whenever crossing into a newly discovered biome.
-- **Proactive Ridge Lookahead Scanner**: Projects terrain 15m to 40m ahead along facing vector (`ship:body:geopositionof(...)`). Detects cliff ledges and steep drop-offs ($>14^\circ$ drop) and automatically slows the rover to 2.0 m/s before reaching the edge.
-- **Terrain-Adaptive Speed Control**: Cruising speed automatically scales up to 10 m/s on flat terrain, while dynamically throttling down on sharp turns ($>15^\circ$), steep slopes ($>10^\circ$), or hill crests to prevent centrifugal side-flipping.
+- **Curiosity-Class Autonomous Navigation**: Operates using a predictive DEM (Digital Elevation Model) local cost matrix combined with dual-layer path planning (SCANsat macro-pathing + kOS micro-pathing).
+- **Macro-Waypoint Generation**: Generates cross-country waypoints while incorporating SCANsat orbital slope maps (if installed) to avoid targeting waypoints inside deep crater basins or steep mountain faces ($>14^\circ$ slope).
+- **Biome-Smart Science Automation**: Continuously queries native KSP body biomes (`ship:body:biomeof(geoposition)`); automatically engages full-stop braking, deploys science instruments (`ModuleScienceExperiment`), transfers data to the science container (`ModuleScienceContainer`), resets sensors, and resumes driving whenever crossing into a newly discovered biome.
 - **Mid-Air Jump & Flip Protection**: Features a mid-air reaction wheel stabilizer (`handleAirborne()`) that levels the rover parallel to the horizon for safe 4-wheel touchdowns during low-gravity jumps, paired with an auto-righting flip recovery routine (`recoverFromFlip()`).
 - **High-Speed RAILS Timewarp**: Warps stationary rovers through lunar night to sunrise and fast-charges batteries to 100% capacity at up to 10,000x speed (`RAILS` mode).
 
@@ -225,12 +226,17 @@ Calculates interplanetary transfer windows and ejection burns:
 
 ### Surface Rover Control ([`lib/rover.ks`](file:///Users/danielkowalsky/Library/Application%20Support/Steam/steamapps/common/Kerbal%20Space%20Program/Ships/Script/lib/rover.ks))
 
-Ground rover autonomy library:
-- `driveToCoordinates(targetLat, targetLng, maxSpeed, arrivalRadius, autoCollectBiomes)`: Autonomously navigates to waypoints with 30m forward terrain slope lookahead (`ship:body:geopositionof(...)`), cornering speed governors ($3.5\text{ m/s}$ on turns $>15^\circ$), inclination throttling ($4\text{ m/s}$ on slopes $>10^\circ$), and mid-transit biome boundary science triggers.
-- `handleAirborne()`: Monitors flight status when airborne; uses SAS reaction wheel torque to level pitch and roll parallel to the horizon for safe 4-wheel landings.
-- `recoverFromFlip()`: Detects vessel rollovers ($>45^\circ$ tilt) and applies reaction wheel torque impulses to auto-upright the rover back onto its wheels.
-- `waitForSunlight()` & `waitForFullEC()`: Suspends operations during lunar night or low battery; engages RAILS timewarp up to $10,000\times$ to fast-forward to sunrise/full battery in $<1$ second.
-- `runScienceExperiments()`: Deploys all active `ModuleScienceExperiment` parts, transmits data over radio link, transfers data into `ModuleScienceContainer`, and resets sensors for repeat use.
+Predictive DEM ground rover autonomy library:
+- `sampleTerrainCostGrid(forwardSpan, sideSpan)`: Samples a $5 \times 5$ forward terrain elevation matrix ($0\text{--}30\text{ m}$ ahead, $\pm 12\text{ m}$ lateral) calculating local slopes, elevation steps ($\Delta h > 2.0\text{ m}$), and SCANsat macro slopes ($>22^\circ$) to build a local risk cost map.
+- `calculateCuriosityPath(targetGeo, grid)`: Evaluates candidate heading vectors ($-60^\circ$ to $+60^\circ$) across the DEM grid using sector average cell risk and direct path weighting to select the optimal obstacle-free corridor.
+- `executePointTurn(targetHDG)` & `executeFullStop()`: Applies active reverse-throttle pulses (`wheelthrottle = -0.25`) to bring rovers to a complete stop ($<0.05\text{ m/s}$) on low-gravity bodies (Mun/Minmus) before executing zero-speed point turns, preventing sliding fishtails.
+- `driveToCoordinates(...)`: Main step-based drive loop featuring surface gravity speed caps ($g = \frac{\mu}{R^2}$), lateral slip drift angle braking, tilt hazard enforcement, and visual odometry slip recovery.
+- `checkTiltHazards()` & `executeRollHazardRecovery()`: Monitors Roll tilt ($>13.5^\circ$) and Pitch incline ($>22^\circ$); triggers emergency braking, reverse backtracking, and down-slope point turns to stabilize the vessel's center of mass.
+- `checkWheelSlip()` & `executeSlipRecovery()`: Visual odometry comparing wheel throttle vs `ship:groundspeed`; reverses $3.5\text{ m}$ and performs unstick point turns if traction is lost for $>3.0\text{ seconds}$.
+- `updateRoverTelemetry()`: Full-screen terminal Autonav HUD rendering live target distance/bearing, base distance, SCANsat status, corridor metrics, and a real-time $5 \times 5$ 2D ASCII DEM terrain radar map.
+- `handleAirborne()` & `recoverFromFlip()`: Mid-air horizon levelling and auto-righting flip recovery routines.
+- `waitForSunlight()` & `waitForFullEC()`: Hibernation mode suspension and RAILS timewarp battery charging.
+- `runScienceExperiments()`: Native KSP biome-triggered deployment, transmission, ESU storage, and sensor reset routines.
 
 ### Geostationary Orbit Mechanics ([`lib/geostationary.ks`](file:///Users/danielkowalsky/Library/Application%20Support/Steam/steamapps/common/Kerbal%20Space%20Program/Ships/Script/lib/geostationary.ks))
 
