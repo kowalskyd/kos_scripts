@@ -22,19 +22,32 @@ local function padRight {
   return padded.
 }
 
-// Queries surface biome safely using native KSP body biome data
+// Queries surface sector / biome safely without crashing across kOS versions
 global function getCurrentBiome {
-  // 1. Try native kOS body biome query (returns real KSP biome name, e.g. "Highlands", "Midlands")
-  if ship:body:hasSuffix("biomeof") {
-    return ship:body:biomeof(ship:geoposition).
-  }
-
-  // 2. Try SCANsat addon if installed
+  // 1. Try SCANsat addon if installed
   if defined addons and addons:hasSuffix("scansat") {
     return addons:scansat:currentbiome().
   }
   
-  return "Surface".
+  // 2. Try to extract biome from active science experiment data
+  for p in ship:parts {
+    for m in p:modules {
+      if m = "ModuleScienceExperiment" {
+        local exp is p:getModule("ModuleScienceExperiment").
+        if exp:hasdata and exp:data:length > 0 {
+          local title is exp:data[0]:title.
+          if title:contains(" from ") {
+            return title:split(" from ")[1].
+          }
+        }
+      }
+    }
+  }
+  
+  // 3. Coordinate Sector Fallback (Unique 0.05-deg geographical grid cell)
+  local sectorLat is round(ship:geoposition:lat * 20) / 20.
+  local sectorLng is round(ship:geoposition:lng * 20) / 20.
+  return "Sector (" + sectorLat + ", " + sectorLng + ")".
 }
 
 // Checks if the Sun is above the horizon at the rover's current location
