@@ -5,11 +5,11 @@ runOncePath("0:/lib/camera_director.ks").
 wait 0.1.
 
 clearScreen.
-print "=== Rover Exploration Mission Initiated ===".
-print "Deploying communication systems and panels...".
+print "=== Curiosity-Class Autonomous Rover Mission Initiated ===".
+print "Deploying communication systems and solar panels...".
 wait 1.
 
-// Deploy systems
+// Deploy communication antennas & solar arrays
 panels on.
 if antenna:length > 0 {
   deployAntenna().
@@ -34,16 +34,16 @@ function getOffsetCoordinates {
   return list(startGeo:lat + latDegrees, startGeo:lng + lngDegrees).
 }
 
-// Generate exploration waypoints dynamically in an infinite mapping loop
+// Generate exploration waypoints dynamically with terrain hazard filter
 local waypointIndex is 1.
 local currentOffsetN is 0.
 local currentOffsetE is 0.
 
 until false {
-  // Generate candidate waypoint coordinates with terrain safety check
+  // Generate candidate macro-waypoint coordinates with terrain safety check
   local nextWp is list().
   local attempts is 0.
-  until attempts >= 10 {
+  until attempts >= 15 {
     local stepN is (random() * 2000) - 1000.
     local stepE is (random() * 2000) - 1000.
     
@@ -51,9 +51,11 @@ until false {
     local candE is currentOffsetE + stepE.
     set nextWp to getOffsetCoordinates(candN, candE).
     
-    // Terrain height check: avoid targeting deep crater interiors
     local candGeo is latlng(nextWp[0], nextWp[1]).
-    if candGeo:terrainheight > 50 {
+    local macroSlope is getSCANsatSlope(candGeo:lat, candGeo:lng).
+
+    // Avoid deep liquid oceans, high mountain faces, and steep crater walls (>14 deg slope)
+    if candGeo:terrainheight > 15 and macroSlope < 14 {
       set currentOffsetN to candN.
       set currentOffsetE to candE.
       break.
@@ -63,20 +65,12 @@ until false {
   
   local distFromStart is sqrt(currentOffsetN^2 + currentOffsetE^2).
   
-  clearScreen.
-  print "=== Biome Exploration Active ===".
-  print "Current Biome: " + getCurrentBiome().
-  print "Targeting Waypoint #" + waypointIndex.
-  print "Distance from base: " + round(distFromStart, 1) + " m".
-  print "---------------------------------".
-  
   // Ensure daylight and full battery before driving
   waitForSunlight().
   waitForFullEC().
 
-  // Drive to destination with dynamic cruising speed up to 8 m/s
-  // (Auto-collects science whenever crossing into a NEW biome during transit)
-  driveToCoordinates(nextWp[0], nextWp[1], 8, 15, true).
+  // Drive to destination using Curiosity Autonav (Cruise speed: 4.0 m/s, Arrival radius: 12 m)
+  driveToCoordinates(nextWp[0], nextWp[1], 4.0, 12.0, true, waypointIndex, startGeo).
   
   // Arrived at waypoint - deploy & transmit science suite
   runScienceExperiments().

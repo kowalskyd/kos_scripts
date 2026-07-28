@@ -1,12 +1,18 @@
 //_________________________________________________
 //‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
-// ROVER CONTROL AND NAVIGATION LIBRARY
+// ROVER CONTROL AND AUTONOMOUS NAVIGATION LIBRARY
+// (Curiosity / Perseverance Predictive DEM Architecture)
 //_________________________________________________
 //‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
 
 global lastScienceBiome is "".
+global autonavGrid is list().
+global autonavBestOffset is 0.
+global autonavLowestCost is 0.
+global autonavWaypointIndex is 1.
+global autonavStartGeo is ship:geoposition.
 
-// Suffix helper for padding
+// Suffix helper for padding text in HUD telemetry
 local function padRight {
   parameter str, length.
   local padded is "" + str.
@@ -64,38 +70,283 @@ global function getECInfo {
   return list(curEC, maxEC).
 }
 
-// Multi-Point Terrain Radar: Scans slope and elevation delta at 25m, 50m, 75m, and 100m lookahead intervals
-global function scanSlopeAhead {
-  parameter angleOffset is 0. // Offset angle in degrees relative to current heading
-  parameter maxLookDist is 100. // Maximum lookahead distance in meters
-
-  local currentGeo is ship:geoposition.
-  local testHeading is mod(ship:heading + angleOffset + 360, 360).
-  local testDirVec is heading(testHeading, 0):vector.
-  
-  local worstSlope is 0.
-  local worstHDiff is 0.
-  local worstGeoPos is currentGeo.
-
-  // Multi-point raycast sampling along beam to catch drop-offs/ridges between 0m and 100m
-  local sampleDistances is list(25, 50, 75, maxLookDist).
-  for d in sampleDistances {
-    local ptGeo is ship:body:geopositionof(ship:position + testDirVec * d).
-    local hDiff is ptGeo:terrainheight - currentGeo:terrainheight.
-    local slope is arctan2(hDiff, d).
-
-    // Catch the most severe hazard (steepest climb, steepest drop-off, or maximum height jump)
-    if abs(slope) > abs(worstSlope) or abs(hDiff) > abs(worstHDiff) {
-      set worstSlope to slope.
-      set worstHDiff to hDiff.
-      set worstGeoPos to ptGeo.
-    }
+// Safe SCANsat slope query helper
+global function getSCANsatSlope {
+  parameter lat, lng.
+  if defined addons and addons:hasSuffix("scansat") {
+    return addons:scansat:scansatslope(lat, lng).
   }
-  
-  return list(worstSlope, worstHDiff, worstGeoPos).
+  return 0.
 }
 
-// Toggles vessel-wide hibernation mode (probe core hibernation, torque cutoff, wheel motor cutoff, light dimming)
+//_________________________________________________
+// 1. DYNAMIC TERRAIN DEM GRID & COST MAPPING
+//_________________________________________________
+
+// Samples a 5x5 forward-oriented terrain grid (0 to 30m ahead, +/- 12m lateral)
+global function sampleTerrainCostGrid {
+  parameter forwardSpan is 30.
+  parameter sideSpan is 12.
+
+  local grid is list().
+  local roverGeo is ship:geoposition.
+  local roverH is roverGeo:terrainheight.
+  local foreVec is ship:facing:forevector.
+  local starVec is ship:facing:starvector.
+
+  local fwdSteps is 5.
+  local sideSteps is 5.
+  local dFwd is forwardSpan / fwdSteps.
+  local dSide is (sideSpan * 2) / (sideSteps - 1).
+
+  from { local i is 1. } until i > fwdSteps step { set i to i + 1. } do {
+    local distFwd is i * dFwd.
+    from { local j is 0. } until j >= sideSteps step { set j to j + 1. } do {
+      local distSide is -sideSpan + (j * dSide).
+      
+      local cellPos is ship:position + foreVec * distFwd + starVec * distSide.
+      local cellGeo is ship:body:geopositionof(cellPos).
+      local cellH is cellGeo:terrainheight.
+      local hDiff is cellH - roverH.
+      local distTotal is sqrt(distFwd^2 + distSide^2).
+      local slope is arctan2(hDiff, distTotal).
+
+      // SCANsat global macro slope check if available
+      local macroSlope is getSCANsatSlope(cellGeo:lat, cellGeo:lng).
+
+      // Impassable hazard criteria: >18 deg slope climb, <-15 deg drop, micro-cliff >2.0m, or SCANsat macro slope >22 deg
+      local isImpassable is false.
+      if slope > 18 or slope < -15 or abs(hDiff) > 2.0 or macroSlope > 22 {
+        set isImpassable to true.
+      }
+
+      // Cost calculation formula
+      local cellCost is abs(slope) * 2.0 + abs(hDiff) * 3.0 + abs(distSide) * 0.10 + macroSlope * 1.0.
+      if isImpassable { set cellCost to 9999. }
+
+      local cell is lexicon().
+      set cell["fwd"] to distFwd.
+      set cell["side"] to distSide.
+      set cell["geo"] to cellGeo.
+      set cell["slope"] to slope.
+      set cell["hDiff"] to hDiff.
+      set cell["cost"] to cellCost.
+      set cell["impassable"] to isImpassable.
+
+      grid:add(cell).
+    }
+  }
+  return grid.
+}
+
+// Evaluates candidate headings (-60 to +60 deg) across the DEM cost grid to pick best route
+global function calculateCuriosityPath {
+  parameter targetGeo.
+  parameter grid.
+
+  local baseHDG is targetGeo:heading. // True compass heading toward waypoint
+  local candidateOffsets is list(0, 15, -15, 30, -30, 45, -45, 60, -60).
+
+  local bestHDG is baseHDG.
+  local bestOffset is 0.
+  local lowestCost is 99999.
+
+  for offset in candidateOffsets {
+    local testHDG is mod(baseHDG + offset + 360, 360).
+    local testVec is heading(testHDG, 0):vector.
+
+    local sumCost is 0.
+    local cellCount is 0.
+    local isSectorBlocked is false.
+
+    // Check all grid cells inside this candidate heading cone
+    for cell in grid {
+      local cellDirVec is (cell["geo"]:position - ship:position):normalized.
+      local angleToCell is vAng(testVec, cellDirVec).
+
+      if angleToCell < 22.0 {
+        if cell["impassable"] {
+          set isSectorBlocked to true.
+          break.
+        }
+        set sumCost to sumCost + cell["cost"].
+        set cellCount to cellCount + 1.
+      }
+    }
+
+    if not isSectorBlocked and cellCount > 0 {
+      local avgCost is sumCost / cellCount.
+      // Offset penalty: heavily penalize unnecessary detours when direct path is clear
+      local totalCost is avgCost + (abs(offset) * 1.5).
+
+      if totalCost < lowestCost {
+        set lowestCost to totalCost.
+        set bestHDG to testHDG.
+        set bestOffset to offset.
+      }
+    }
+  }
+
+  // Fallback: If all forward rays blocked, detour 75 degrees away from worst hazard
+  if lowestCost >= 9000 {
+    set bestHDG to mod(ship:heading + 75, 360).
+    set bestOffset to 75.
+  }
+
+  // Flag grid cells along chosen best heading vector for 2D radar visualization
+  local chosenVec is heading(bestHDG, 0):vector.
+  for cell in grid {
+    local cellDirVec is (cell["geo"]:position - ship:position):normalized.
+    if vAng(chosenVec, cellDirVec) < 22.0 {
+      set cell["isPath"] to true.
+    }
+  }
+
+  return list(bestHDG, lowestCost, bestOffset).
+}
+
+//_________________________________________________
+// 2. POINT TURN & STRAIGHT DRIVE CONTROLS
+//_________________________________________________
+
+// Active braking helper: Brings rover to absolute groundspeed < 0.05 m/s using brakes and active reverse pulses
+global function executeFullStop {
+  parameter statusMsg is "Full Stop".
+
+  brakes on.
+  set ship:control:pilotmainthrottle to 0.
+  unlock wheelthrottle.
+  lock wheelthrottle to 0.
+
+  local stopStart is time:seconds.
+  until ship:groundspeed < 0.05 or (time:seconds - stopStart > 5.0) {
+    // Apply gentle reverse pulse on low-g bodies (Mun/Minmus) if skidding above 0.3 m/s
+    if ship:groundspeed > 0.3 {
+      lock wheelthrottle to -0.25.
+    } else {
+      lock wheelthrottle to 0.
+    }
+    updateRoverTelemetry(ship:geoposition, statusMsg + " (" + round(ship:groundspeed, 2) + " m/s)").
+    wait 0.05.
+  }
+
+  lock wheelthrottle to 0.
+  brakes on.
+  wait 0.3.
+}
+
+// Zero-speed point turn execution toward target heading
+global function executePointTurn {
+  parameter targetHDG.
+  parameter statusMsg is "Point Turn".
+
+  local hdgDiff is mod(targetHDG - ship:heading + 540, 360) - 180.
+  if abs(hdgDiff) < 4.0 { return. }
+
+  // 1. MUST come to an absolute full stop first before attempting point turn
+  executeFullStop("Stopping before " + statusMsg).
+
+  sas on.
+  lock wheelsteering to targetHDG.
+
+  local turnStart is time:seconds.
+  until abs(mod(targetHDG - ship:heading + 540, 360) - 180) < 3.5 or (time:seconds - turnStart > 7.0) {
+    brakes off.
+    local currentDiff is abs(mod(targetHDG - ship:heading + 540, 360) - 180).
+    if currentDiff > 18 {
+      lock wheelthrottle to 0.10.
+    } else {
+      lock wheelthrottle to 0.03.
+    }
+    updateRoverTelemetry(ship:geoposition, statusMsg + " (" + round(ship:heading, 1) + " -> " + round(targetHDG, 1) + " deg)").
+    wait 0.05.
+  }
+
+  // 2. Settle rover to complete stop after completing turn
+  executeFullStop("Settling after " + statusMsg).
+}
+
+//_________________________________________________
+// 3. HAZARD MONITORING & RECOVERY (ROLL / PITCH / SLIP)
+//_________________________________________________
+
+// Evaluates Pitch and Roll angles separately for rollover and steep slope hazards
+global function checkTiltHazards {
+  local currentPitch is 90 - vAng(ship:up:vector, ship:facing:forevector).
+  local currentRoll  is 90 - vAng(ship:up:vector, ship:facing:starvector).
+
+  if abs(currentRoll) > 13.5 {
+    return list(true, "CRITICAL ROLL TILT (" + round(currentRoll, 1) + " deg)", currentRoll, currentPitch).
+  } else if abs(currentPitch) > 22.0 {
+    return list(true, "STEEP PITCH INCLINE (" + round(currentPitch, 1) + " deg)", currentRoll, currentPitch).
+  }
+
+  return list(false, "OK", currentRoll, currentPitch).
+}
+
+// Handles emergency halt and down-slope point turn on high roll tilt
+global function executeRollHazardRecovery {
+  parameter rollVal.
+
+  hudText("CRITICAL ROLL HAZARD (" + round(rollVal, 1) + " deg)! Emergency Halting...", 4, 2, 25, rgb(1, 0, 0), true).
+  brakes on.
+  lock wheelthrottle to 0.
+  wait 0.5.
+
+  // 1. Reverse 3 meters straight back
+  brakes off.
+  lock wheelthrottle to -0.30.
+  local revStart is time:seconds.
+  wait until (time:seconds - revStart > 2.5) or (ship:groundspeed < 0.05 and time:seconds - revStart > 0.8).
+
+  brakes on.
+  lock wheelthrottle to 0.
+  wait 0.4.
+
+  // 2. Point turn down-slope to stabilize center of mass
+  local rollSign is 1.
+  if rollVal < 0 { set rollSign to -1. }
+  local downSlopeHDG is mod(ship:heading + (80 * rollSign) + 360, 360).
+  executePointTurn(downSlopeHDG, "Roll Recovery Turn").
+}
+
+// Visual Odometry slip detection (compares wheel throttle vs ground speed)
+global function checkWheelSlip {
+  parameter appliedThrottle.
+  parameter currentSlipTimer.
+
+  if appliedThrottle > 0.15 and ship:groundspeed < 0.15 {
+    return currentSlipTimer + 0.1.
+  }
+  return 0.
+}
+
+// Unstick recovery sequence when wheel traction is lost
+global function executeSlipRecovery {
+  hudText("TRACTION LOSS / WHEEL SLIP DETECTED! Reversing...", 4, 2, 25, rgb(1, 0.5, 0), true).
+  brakes on.
+  lock wheelthrottle to 0.
+  wait 0.5.
+
+  // 1. Reverse 3.5 meters
+  brakes off.
+  lock wheelthrottle to -0.35.
+  local revStart is time:seconds.
+  wait until (time:seconds - revStart > 3.0) or (ship:groundspeed < 0.05 and time:seconds - revStart > 1.0).
+
+  brakes on.
+  lock wheelthrottle to 0.
+  wait 0.4.
+
+  // 2. Point turn 45 degrees to side to clear obstacle
+  local detourHDG is mod(ship:heading + 45, 360).
+  executePointTurn(detourHDG, "Unstick Detour").
+}
+
+//_________________________________________________
+// 4. HIBERNATION, AIRBORNE & BATTERY MANAGEMENT
+//_________________________________________________
+
 // Toggles vessel-wide hibernation mode (probe core hibernation, torque cutoff, wheel motor cutoff, light dimming)
 global function setHibernation {
   parameter enable.
@@ -105,7 +356,6 @@ global function setHibernation {
     sas off.
     brakes on.
     
-    // Unlock steering & throttle so wheel motors release power draw
     unlock wheelsteering.
     unlock wheelthrottle.
     set ship:control:neutral to true.
@@ -140,7 +390,6 @@ global function setHibernation {
       }
     }
   } else {
-    // Wake up systems from hibernation
     for p in ship:parts {
       if p:hasmodule("ModuleCommand") {
         local cmd is p:getModule("ModuleCommand").
@@ -175,16 +424,14 @@ global function setHibernation {
   }
 }
 
-// Auto-upright recovery if rover flips or tumbles onto its roof
+// Auto-upright recovery if rover flips onto roof
 global function recoverFromFlip {
   local currentTilt is vAng(ship:up:vector, ship:facing:topvector).
   if currentTilt > 45 {
     brakes on.
-    set targetThrottle to 0.
     unlock wheelsteering.
     unlock wheelthrottle.
     
-    // Enable SAS reaction wheel torque impulse to flip back onto wheels
     sas on.
     set ship:control:roll to 1.0.
     set ship:control:pitch to 1.0.
@@ -199,18 +446,16 @@ global function recoverFromFlip {
   }
 }
 
-// Mid-Air Jump Stabilizer: Levels reaction wheels while airborne for safe 4-wheel touchdown
+// Mid-Air Jump Stabilizer: Levels reaction wheels while airborne for safe touchdown
 global function handleAirborne {
   if not (ship:status = "LANDED" or ship:status = "SPLASHED") {
-    brakes off. // Allow wheels to rotate freely on landing impact
-    set targetThrottle to 0.
+    brakes off.
     sas on.
 
     until ship:status = "LANDED" or ship:status = "SPLASHED" {
       local airPitch is 90 - vAng(ship:up:vector, ship:facing:forevector).
       local airRoll is 90 - vAng(ship:up:vector, ship:facing:starvector).
       
-      // Active reaction wheel torque to keep roof facing UP and belly facing DOWN
       set ship:control:pitch to min(1.0, max(-1.0, -airPitch * 0.1)).
       set ship:control:roll to min(1.0, max(-1.0, -airRoll * 0.1)).
       wait 0.05.
@@ -223,62 +468,13 @@ global function handleAirborne {
   }
 }
 
-// Executes a 60-degree detour around crater rims / steep ridge drop-offs
-global function executeRidgeDetour {
-  brakes on.
-  set targetThrottle to 0.
-  unlock wheelsteering.
-  unlock wheelthrottle.
-  wait 0.8.
-
-  // 1. Reverse 12 meters back from the cliff edge to clear danger zone
-  brakes off.
-  lock wheelthrottle to -0.35.
-  local reverseStart is time:seconds.
-  wait until (time:seconds - reverseStart > 3.5) or not (ship:status = "LANDED").
-  
-  brakes on.
-  lock wheelthrottle to 0.
-  wait 0.5.
-
-  // 2. Calculate detour heading (60 deg to the right along crater rim)
-  local currentHDG is ship:heading.
-  local detourHDG is mod(currentHDG + 60, 360).
-  local detourHeadingVector is heading(detourHDG, 0):vector.
-  local detourGeo is ship:body:geopositionof(ship:position + detourHeadingVector * 45).
-
-  // 3. Drive 45 meters along detour path around the rim
-  brakes off.
-  local localThrottle is 0.
-  lock wheelsteering to detourGeo.
-  lock wheelthrottle to localThrottle.
-
-  local detourStart is time:seconds.
-  until (time:seconds - detourStart > 12) or (detourGeo:distance < 12) {
-    local curSpd is ship:groundspeed.
-    if curSpd < 4.0 {
-      set localThrottle to 0.4.
-    } else {
-      set localThrottle to 0.
-    }
-    wait 0.1.
-  }
-
-  brakes on.
-  lock wheelthrottle to 0.
-  wait 0.5.
-  brakes off.
-}
-
-// Suspends movement and operations when the sun is down with automatic high-speed timewarp and vessel hibernation
+// Suspends movement when sun is down with timewarp & hibernation
 global function waitForSunlight {
   if not isSunUp() {
     brakes on.
-    set targetThrottle to 0.
     unlock wheelsteering.
     unlock wheelthrottle.
     
-    // Engage vessel-wide hibernation mode immediately
     setHibernation(true).
 
     local waitStart is time:seconds.
@@ -317,7 +513,6 @@ global function waitForSunlight {
     set kuniverse:timewarp:rate to 1.
     wait until kuniverse:timewarp:rate = 1.
     
-    // Restore systems from hibernation
     setHibernation(false).
 
     print "                                                                " at (0, 7).
@@ -326,7 +521,7 @@ global function waitForSunlight {
   }
 }
 
-// Waits until Electric Charge (EC) is fully recharged (>= 98%) with zero-power hibernation & automatic timewarp
+// Recharges battery to >= 98% with zero-power hibernation
 global function waitForFullEC {
   local ecData is getECInfo().
   local curEC is ecData[0].
@@ -336,7 +531,6 @@ global function waitForFullEC {
   
   if (curEC / maxEC) < 0.95 {
     brakes on.
-    set targetThrottle to 0.
     unlock wheelsteering.
     unlock wheelthrottle.
 
@@ -344,7 +538,6 @@ global function waitForFullEC {
       waitForSunlight().
     }
 
-    // Engage zero-power hibernation mode immediately
     setHibernation(true).
 
     local waitStart is time:seconds.
@@ -356,12 +549,12 @@ global function waitForFullEC {
     wait 0.2.
 
     if kuniverse:timewarp:issettled {
-      set kuniverse:timewarp:warp to 4. // 100x high-speed warp
+      set kuniverse:timewarp:warp to 4.
     } else {
       set kuniverse:timewarp:mode to "PHYSICS".
       wait 0.2.
       if kuniverse:timewarp:issettled {
-        set kuniverse:timewarp:warp to 3. // 4x physics warp fallback if sliding on slope
+        set kuniverse:timewarp:warp to 3.
       }
     }
 
@@ -402,7 +595,6 @@ global function waitForFullEC {
     set kuniverse:timewarp:rate to 1.
     wait until kuniverse:timewarp:rate = 1.
 
-    // Wake up from hibernation
     setHibernation(false).
 
     print "                                                                " at (0, 7).
@@ -410,18 +602,27 @@ global function waitForFullEC {
   }
 }
 
-// Dedicated continuous telemetry HUD display helper
+//_________________________________________________
+// 5. CONTINUOUS TELEMETRY HUD & NAVIGATION ENGINE
+//_________________________________________________
+
+// Live HUD display helper with 2D DEM Radar map and SCANsat status
 global function updateRoverTelemetry {
   parameter targetGeo.
   parameter statusMsg is "".
 
   local curSpd is ship:groundspeed.
   local currentBiome is getCurrentBiome().
-  local dist is targetGeo:distance.
-  local scanCenter is scanSlopeAhead(0, 100).
-  local aheadSlope is scanCenter[0].
+  local distTarget is targetGeo:distance.
+  local distBase is autonavStartGeo:distance.
+  local targetBearing is round(targetGeo:bearing, 1).
+
   local currentPitch is 90 - vAng(ship:up:vector, ship:facing:forevector).
-  local currentTilt is vAng(ship:up:vector, ship:facing:topvector).
+  local currentRoll  is 90 - vAng(ship:up:vector, ship:facing:starvector).
+
+  local surfaceG is ship:body:mu / (ship:body:radius^2).
+  local gFactor is sqrt(max(0.1, surfaceG) / 9.81).
+  local bodySpeedCap is max(1.6, 4.0 * gFactor).
 
   local ecData is getECInfo().
   local ecCur is ecData[0].
@@ -429,52 +630,112 @@ global function updateRoverTelemetry {
   local ecPct is 100.
   if ecMax > 0 { set ecPct to round((ecCur / ecMax) * 100). }
 
-  print "--- Rover Telemetry ---" at (0, 7).
-  print "Biome:       " + padRight(currentBiome, 30) at (0, 8).
-  print "Target Dist: " + padRight(round(dist, 1) + " m", 30) at (0, 9).
-  print "Speed:       " + padRight(round(curSpd, 1) + " m/s", 30) at (0, 10).
-  print "100m Slope:  " + padRight(round(aheadSlope, 1) + " deg", 30) at (0, 11).
-  print "Pitch/Tilt:  " + padRight(round(currentPitch, 1) + " / " + round(currentTilt, 1) + " deg", 30) at (0, 12).
-  print "E.Charge:    " + padRight(round(ecCur) + "/" + round(ecMax) + " (" + ecPct + "%)", 30) at (0, 13).
-  if statusMsg <> "" {
-    print "Status:      " + padRight(statusMsg, 35) at (0, 14).
+  local scansatStatus is "NOT DETECTED (kOS DEM)".
+  if defined addons and addons:hasSuffix("scansat") {
+    set scansatStatus to "CONNECTED (Active DEM)".
+  }
+
+  local impassableCount is 0.
+  for cell in autonavGrid {
+    if cell["impassable"] { set impassableCount to impassableCount + 1. }
+  }
+
+  local pathText is "Direct (0 deg)".
+  if autonavBestOffset > 0 { set pathText to "Bypass Right (+" + autonavBestOffset + " deg)". }
+  else if autonavBestOffset < 0 { set pathText to "Bypass Left (" + autonavBestOffset + " deg)". }
+
+  local stabilityText is "[STABLE]".
+  if abs(currentRoll) > 10 or abs(currentPitch) > 15 { set stabilityText to "[HAZARD]". }
+
+  print "==================================================" at (0, 0).
+  print "=== CURIOSITY AUTONAV MISSION TELEMETRY ===" at (0, 1).
+  print "==================================================" at (0, 2).
+  print "Waypoint Target: Waypoint #" + autonavWaypointIndex + "  [Lat:" + round(targetGeo:lat,2) + ", Lng:" + round(targetGeo:lng,2) + "]" at (0, 3).
+  print "Target Distance: " + padRight(round(distTarget, 1) + " m (Bearing: " + targetBearing + " deg)", 30) at (0, 4).
+  print "Dist from Base:  " + padRight(round(distBase, 1) + " m", 30) at (0, 5).
+  print "Current Biome:   " + padRight(currentBiome, 30) at (0, 6).
+  print "SCANsat Status:  " + padRight(scansatStatus, 30) at (0, 7).
+  print "--------------------------------------------------" at (0, 8).
+  print "Cruising Speed:  " + padRight(round(curSpd, 1) + " / " + round(bodySpeedCap, 1) + " m/s (" + ship:body:name + " g=" + round(surfaceG,2) + ")", 30) at (0, 9).
+  print "Pitch / Roll:    " + padRight(round(currentPitch, 1) + " / " + round(currentRoll, 1) + " deg " + stabilityText, 32) at (0, 10).
+  print "E.Charge:        " + padRight(round(ecCur) + "/" + round(ecMax) + " (" + ecPct + "%)", 30) at (0, 11).
+  print "Nav Corridor:    " + padRight(pathText + " (Cost: " + round(autonavLowestCost,1) + ")", 30) at (0, 12).
+  print "Hazards Scan:    " + padRight(impassableCount + " / " + autonavGrid:length + " cells blocked", 30) at (0, 13).
+  print "--------------------------------------------------" at (0, 14).
+  print "2D LOCAL TERRAIN RADAR MAP (0-30m Ahead):         " at (0, 15).
+
+  if autonavGrid:length >= 25 {
+    from { local row is 4. } until row < 0 step { set row to row - 1. } do {
+      local rowStr is "  [ ".
+      from { local col is 0. } until col >= 5 step { set col to col + 1. } do {
+        local cellIdx is row * 5 + col.
+        local cell is autonavGrid[cellIdx].
+        if cell["impassable"] {
+          set rowStr to rowStr + "#  ".
+        } else if cell:haskey("isPath") and cell["isPath"] {
+          set rowStr to rowStr + "*  ".
+        } else if cell["cost"] > 10 {
+          set rowStr to rowStr + "~  ".
+        } else {
+          set rowStr to rowStr + ".  ".
+        }
+      }
+      set rowStr to rowStr + "]  " + ((row + 1) * 6) + "m".
+      print padRight(rowStr, 48) at (0, 16 + (4 - row)).
+    }
+    print "        [^]  Rover (Heading " + round(ship:heading, 1) + " deg)   " at (0, 21).
   } else {
-    print "                                                                " at (0, 14).
+    print "  [ Grid map scanning... ]                        " at (0, 16).
+    print "                                                  " at (0, 17).
+    print "                                                  " at (0, 18).
+    print "                                                  " at (0, 19).
+    print "                                                  " at (0, 20).
+    print "                                                  " at (0, 21).
+  }
+
+  print "--------------------------------------------------" at (0, 22).
+  if statusMsg <> "" {
+    print "Status: " + padRight(statusMsg, 40) at (0, 23).
+  } else {
+    print "                                                  " at (0, 23).
   }
 }
 
+// Main Curiosity-style step-based autonomous drive loop
 global function driveToCoordinates {
   parameter targetLat.
   parameter targetLng.
-  parameter maxSpeed is 10. // m/s (Fast cruising)
-  parameter arrivalRadius is 15. // meters
+  parameter maxSpeed is 4.0. // m/s (Curiosity cruise speed)
+  parameter arrivalRadius is 12.0. // meters
   parameter autoCollectBiomes is true.
+  parameter waypointIndex is 1.
+  parameter startGeo is ship:geoposition.
 
-  // Check sunlight and EC before beginning drive
+  set autonavWaypointIndex to waypointIndex.
+  set autonavStartGeo to startGeo.
+
+  // Pre-drive battery and daylight check
   waitForSunlight().
   waitForFullEC().
-  local minDistToTarget is latlng(targetLat, targetLng):distance.
+
+  local targetGeo is latlng(targetLat, targetLng).
+  local minDistToTarget is targetGeo:distance.
   local timeOfBestDist is time:seconds.
-  local detourCount is 0.
+  local slipTimer is 0.
 
   if lastScienceBiome = "" {
     set lastScienceBiome to getCurrentBiome().
   }
 
-  local targetGeo is latlng(targetLat, targetLng).
-  
   brakes off.
-  
-  // Enable SAS to help stabilize reaction wheel anti-roll
   sas on.
 
-  // Set up kOS steering and throttle manager for rovers
   local targetThrottle is 0.
   lock wheelsteering to targetGeo.
   lock wheelthrottle to targetThrottle.
-  
+
   until false {
-    // Check for airborne jumps / launches
+    // 1. Airborne check
     if not (ship:status = "LANDED" or ship:status = "SPLASHED") {
       handleAirborne().
       brakes off.
@@ -482,21 +743,9 @@ global function driveToCoordinates {
       lock wheelthrottle to targetThrottle.
     }
 
-    // Low battery (15%) emergency check during driving
+    // 2. Battery & Night check
     local ecCheck is getECInfo().
-    if ecCheck[1] > 0 and (ecCheck[0] / ecCheck[1]) < 0.15 {
-      brakes on.
-      set targetThrottle to 0.
-      unlock wheelsteering.
-      unlock wheelthrottle.
-      waitForFullEC().
-      brakes off.
-      lock wheelsteering to targetGeo.
-      lock wheelthrottle to targetThrottle.
-    }
-
-    // Nighttime check: pause driving if sun goes down
-    if not isSunUp() {
+    if (ecCheck[1] > 0 and (ecCheck[0] / ecCheck[1]) < 0.15) or not isSunUp() {
       brakes on.
       set targetThrottle to 0.
       unlock wheelsteering.
@@ -508,33 +757,27 @@ global function driveToCoordinates {
       lock wheelthrottle to targetThrottle.
     }
 
-    // Check for Biome boundary crossings during drive
+    // 3. Biome boundary crossing check
     local currentBiome is getCurrentBiome().
     if autoCollectBiomes and lastScienceBiome <> "" and currentBiome <> lastScienceBiome {
       brakes on.
       set targetThrottle to 0.
       unlock wheelsteering.
       unlock wheelthrottle.
-      
       runScienceExperiments().
       set lastScienceBiome to currentBiome.
-      
       brakes off.
       lock wheelsteering to targetGeo.
       lock wheelthrottle to targetThrottle.
     }
 
     local dist is targetGeo:distance.
-    local curSpeed is ship:groundspeed.
-    local bearingTo is targetGeo:bearing. // relative angle to target (-180 to 180)
-    
-    // Track closest approach distance to waypoint
-    if dist < (minDistToTarget - 5) {
+    if dist < (minDistToTarget - 4) {
       set minDistToTarget to dist.
       set timeOfBestDist to time:seconds.
     }
 
-    // Arrival Condition 1: Direct reach (dist < arrivalRadius)
+    // 4. Arrival condition
     if dist < arrivalRadius {
       brakes on.
       set targetThrottle to 0.
@@ -544,11 +787,10 @@ global function driveToCoordinates {
       runScienceExperiments().
       break.
     }
-    
-    // Arrival Condition 2: Best-Approach Acceptance (Inaccessible Waypoint)
-    // If target is blocked by terrain (5 detours) or progress is stagnant
+
+    // 5. Stagnant progress fallback check
     local timeStagnant is time:seconds - timeOfBestDist.
-    if detourCount >= 5 or (timeStagnant > 60 and dist < 400) or ((dist < 300 or minDistToTarget < 300) and timeStagnant > 40) {
+    if (timeStagnant > 70 and dist < 400) or (timeStagnant > 45 and dist < 150) {
       brakes on.
       set targetThrottle to 0.
       unlock wheelsteering.
@@ -557,199 +799,78 @@ global function driveToCoordinates {
       runScienceExperiments().
       break.
     }
-    
-    // Pitch: nose-up/down tilt relative to horizontal
-    local currentPitch is 90 - vAng(ship:up:vector, ship:facing:forevector).
-    // Total tilt: tilt of the rover's roof relative to vertical
-    local currentTilt is vAng(ship:up:vector, ship:facing:topvector).
-    
-    // Check for flip / rollover hazard
-    if currentTilt > 45 {
-      recoverFromFlip().
-    }
 
-    // Long-Range 100-Meter Raycast Terrain Scanner
-    local scanCenter is scanSlopeAhead(0, 100).
-    local aheadSlope is scanCenter[0].
-    local hDiff is scanCenter[1].
-
-    // Detect steep climb (>12 deg) or steep drop-off/cliff (< -10 deg) or > 8m height jump 100m ahead
-    if aheadSlope > 12 or aheadSlope < -10 or abs(hDiff) > 8 {
-      set detourCount to detourCount + 1.
-      hudText("RIDGE DETECTED (Slope " + round(aheadSlope, 1) + " deg)! Braking straight ahead...", 4, 2, 25, rgb(1, 0.5, 0.0), false).
-      
-      // 1. STRAIGHT-LINE BRAKING: Lock steering to current facing heading during braking to avoid off-course drift
-      local facingHDG is ship:heading.
-      lock wheelsteering to facingHDG.
-      set targetThrottle to 0.
-      lock wheelthrottle to targetThrottle.
-      brakes on.
-      local stopStart1 is time:seconds.
-      until ship:groundspeed < 0.15 or (time:seconds - stopStart1 > 1.8) {
-        updateRoverTelemetry(targetGeo, "Crater/Ridge ahead! Braking...").
-        wait 0.1.
-      }
-      wait 0.2.
-
-      // 2. TANGENTIAL RIM-BYPASS EVASION LOOP
-      until false {
-        // Probe Left (-45 deg) and Right (+45 deg) slope alternatives to pick rim tangent direction
-        local scanRight is scanSlopeAhead(45, 100).
-        local scanLeft is scanSlopeAhead(-45, 100).
-        
-        local searchSign is 1. // Default right (+60 deg tangent)
-        if abs(scanLeft[0]) < abs(scanRight[0]) {
-          set searchSign to -1. // Prefer left (-60 deg tangent) if flatter
-        }
-
-        local baseHDG is ship:heading.
-        local currentStep is 1.
-        local clearAngleOffset is 0.
-        local clearFound is false.
-
-        // Virtual Raycast Scan Loop for Rim Tangent Heading (testing 45°, 60°, 75°, 90°)
-        until clearFound {
-          set clearAngleOffset to (30 + currentStep * 15) * searchSign.
-          if abs(clearAngleOffset) > 120 {
-            if searchSign = 1 {
-              set searchSign to -1.
-              set currentStep to 1.
-              set clearAngleOffset to (30 + currentStep * 15) * searchSign.
-            } else {
-              set clearAngleOffset to 75 * searchSign.
-              set clearFound to true.
-              break.
-            }
-          }
-
-          // Raycast scan 100m ahead at virtual tangent angle offset relative to baseHDG
-          local testScan is scanSlopeAhead(clearAngleOffset, 100).
-          if testScan[0] > 12 or testScan[0] < -10 or abs(testScan[1]) > 8 {
-            updateRoverTelemetry(targetGeo, "Scanning rim tangent at " + round(clearAngleOffset) + " deg...").
-            set currentStep to currentStep + 1.
-          } else {
-            updateRoverTelemetry(targetGeo, "Clear rim tangent at " + round(clearAngleOffset) + " deg!").
-            set clearFound to true.
-          }
-          wait 0.1.
-        }
-
-        // 3. DRIVE 250-METER CONTINUOUS TANGENT RIM ARC
-        local clearHDG is mod(baseHDG + clearAngleOffset + 360, 360).
-        local clearDirVec is heading(clearHDG, 0):vector.
-        local detourGeo is ship:body:geopositionof(ship:position + clearDirVec * 250).
-
-        brakes off.
-        local detourThrottle is 0.
-        lock wheelsteering to detourGeo.
-        lock wheelthrottle to detourThrottle.
-
-        local legStart is time:seconds.
-        until (time:seconds - legStart > 55) or (detourGeo:distance < 15) {
-          if not (ship:status = "LANDED") { handleAirborne(). }
-          local curSpd is ship:groundspeed.
-          if curSpd < 4.5 {
-            set detourThrottle to 0.4.
-          } else {
-            set detourThrottle to 0.
-          }
-          local legLeft is round(detourGeo:distance, 1).
-          updateRoverTelemetry(targetGeo, "Rim Bypass Arc: " + legLeft + "m left").
-          wait 0.1.
-        }
-
-        // 4. STOP COMPLETELY AND TURN TOWARD TARGET
-        brakes on.
-        set targetThrottle to 0.
-        lock wheelthrottle to targetThrottle.
-        local stopStart2 is time:seconds.
-        until ship:groundspeed < 0.15 or (time:seconds - stopStart2 > 1.8) {
-          updateRoverTelemetry(targetGeo, "Braking post-bypass arc...").
-          wait 0.1.
-        }
-        wait 0.2.
-
-        brakes off.
+    // 6. Pitch & Roll Hazard Enforcement
+    local tiltHazard is checkTiltHazards().
+    if tiltHazard[0] {
+      if tiltHazard[1]:contains("ROLL") {
+        executeRollHazardRecovery(tiltHazard[2]).
         lock wheelsteering to targetGeo.
-        local targetTurnStart is time:seconds.
-        until abs(targetGeo:bearing) < 6 or (time:seconds - targetTurnStart > 5) {
-          updateRoverTelemetry(targetGeo, "Turning to target...").
-          wait 0.1.
-        }
-
-        brakes on.
-        local stopStart3 is time:seconds.
-        until ship:groundspeed < 0.15 or (time:seconds - stopStart3 > 1.8) {
-          updateRoverTelemetry(targetGeo, "Stopping to recheck target...").
-          wait 0.1.
-        }
-        wait 0.2.
-
-        // 5. RE-CHECK IF RIDGE AHEAD TOWARDS TARGET
-        local recheckScan is scanSlopeAhead(0, 100).
-        if recheckScan[0] > 12 or recheckScan[0] < -10 or abs(recheckScan[1]) > 8 {
-          // Obstacle still present towards target! Re-initiate evasion sequence facing target ridge
-          local facingTargetHDG is ship:heading.
-          lock wheelsteering to facingTargetHDG.
-          local stopStart4 is time:seconds.
-          until ship:groundspeed < 0.15 or (time:seconds - stopStart4 > 1.8) {
-            updateRoverTelemetry(targetGeo, "Crater persists! Re-initiating bypass...").
-            wait 0.1.
-          }
-          wait 0.2.
-        } else {
-          // Target path is clear! Resume normal driving to target
-          updateRoverTelemetry(targetGeo, "Target path clear! Resuming...").
-          brakes off.
-          lock wheelsteering to targetGeo.
-          lock wheelthrottle to targetThrottle.
-          break.
-        }
+        lock wheelthrottle to targetThrottle.
       }
     }
 
-    // Dynamic Pre-Turn Deceleration & Speed Governor
-    local safeSpeed is maxSpeed.
-
-    if abs(bearingTo) > 35 {
-      set safeSpeed to min(safeSpeed, 2.5). // Tight cornering speed limit (2.5 m/s)
-    } else if abs(bearingTo) > 12 {
-      set safeSpeed to min(safeSpeed, 3.5). // Moderate cornering speed limit (3.5 m/s)
+    // 7. Visual Odometry Slip Detection
+    set slipTimer to checkWheelSlip(targetThrottle, slipTimer).
+    if slipTimer > 3.0 {
+      executeSlipRecovery().
+      set slipTimer to 0.
+      lock wheelsteering to targetGeo.
+      lock wheelthrottle to targetThrottle.
     }
 
-    if aheadSlope > 18 or hDiff > 6 {
-      set safeSpeed to min(safeSpeed, 3.5). // Hill crest speed limit
+    // 8. Dynamic DEM Grid Scan & Path Evaluation
+    set autonavGrid to sampleTerrainCostGrid(30, 12).
+    local pathEval is calculateCuriosityPath(targetGeo, autonavGrid).
+    local desiredHDG is pathEval[0].
+    set autonavLowestCost to pathEval[1].
+    set autonavBestOffset to pathEval[2].
+
+    // 9. Point Turn if heading deviation > 22 degrees
+    local hdgDev is abs(mod(desiredHDG - ship:heading + 540, 360) - 180).
+    if hdgDev > 22.0 {
+      executePointTurn(desiredHDG, "Autonav Point Turn").
+      lock wheelsteering to desiredHDG.
+      lock wheelthrottle to targetThrottle.
     }
 
-    if abs(currentPitch) > 10 or currentTilt > 10 {
-      set safeSpeed to min(safeSpeed, 4.0). // Slope speed limit
-    }
-    
-    // Pre-Turn Active Deceleration: Tap brakes if approaching a turn at high speed
-    if abs(bearingTo) > 12 and curSpeed > (safeSpeed + 0.8) {
+    // 10. Straight-Line Driving Step & Gravity Speed Matching
+    local surfaceG is ship:body:mu / (ship:body:radius^2).
+    local gFactor is sqrt(max(0.1, surfaceG) / 9.81).
+    local bodySpeedCap is min(maxSpeed, max(1.6, maxSpeed * gFactor)).
+
+    local curSpeed is ship:groundspeed.
+    local safeSpeed is bodySpeedCap.
+    if tiltHazard[3] > 10 { set safeSpeed to min(safeSpeed, 1.8). } // Slope speed limit
+
+    // Monitor lateral drift angle relative to facing heading
+    local velVec is ship:velocity:surface.
+    local driftAngle is 0.
+    if curSpeed > 0.4 { set driftAngle to vAng(velVec, ship:facing:forevector). }
+
+    // If over-speeding or slipping sideways on low-g regolith, tap brakes
+    if curSpeed > (safeSpeed + 0.3) or (curSpeed > 0.6 and driftAngle > 14.0) {
       brakes on.
       set targetThrottle to 0.
     } else if curSpeed < safeSpeed {
       brakes off.
-      set targetThrottle to min(1.0, (safeSpeed - curSpeed) * 0.5 + 0.2).
+      set targetThrottle to min(1.0, (safeSpeed - curSpeed) * 0.3 + 0.10).
     } else {
       brakes off.
       set targetThrottle to 0.
     }
-    
-    // Continuous live HUD telemetry display
-    updateRoverTelemetry(targetGeo, "Cruising to target").
-    wait 0.1.
+
+    updateRoverTelemetry(targetGeo, "Cruising step (" + round(curSpeed,1) + "/" + round(safeSpeed,1) + " m/s)").
+    wait 0.05.
   }
 }
 
+// Deploy and transmit/store science experiments
 global function runScienceExperiments {
-  // Ensure daylight and full battery before running experiments
   waitForSunlight().
   waitForFullEC().
 
   set lastScienceBiome to getCurrentBiome().
-
   print "Deploying science suite (" + lastScienceBiome + ")..." at (0, 14).
 
   local experimentsList is list().
@@ -766,18 +887,15 @@ global function runScienceExperiments {
     return.
   }
 
-  // Check antenna connection status
   local commsConnected is ship:connection:isconnected.
   
   for exp in experimentsList {
-    // If experiment doesn't have data yet, deploy it
     if not exp:hasdata {
       exp:deploy().
       local startWait is time:seconds.
       wait until exp:hasdata or (time:seconds - startWait > 5).
     }
     
-    // Transmit ONLY if antenna is connected to comms network
     if exp:hasdata and commsConnected {
       exp:transmit().
       local tStart is time:seconds.
@@ -785,7 +903,6 @@ global function runScienceExperiments {
     }
   }
   
-  // Try to collect all stored data into the ship's science container (ESU)
   local containerList is ship:modulesNamed("ModuleScienceContainer").
   if containerList:length > 0 {
     local container is containerList[0].
@@ -799,9 +916,6 @@ global function runScienceExperiments {
     wait 1.0.
   }
 
-  // Out-of-Comms / Reset Safety Handler:
-  // If sensors STILL hold untransmitted data (because vessel is out of comms range),
-  // reset/dump the sensor so individual parts are cleared for the next waypoint.
   for exp in experimentsList {
     if exp:hasdata {
       print "Out of Comms Range: Clearing sensor for next waypoint..." at (0, 14).
