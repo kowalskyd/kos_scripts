@@ -260,7 +260,7 @@ global function executePointTurn {
   if abs(hdgDiff) < 4.0 { return. }
 
   // 1. MUST come to an absolute full stop first before attempting point turn
-  executeFullStop("Stopping before " + statusMsg).
+  //executeFullStop("Stopping before " + statusMsg).
 
   sas on.
   lock wheelsteering to targetHDG.
@@ -279,7 +279,8 @@ global function executePointTurn {
   }
 
   // 2. Settle rover to complete stop after completing turn
-  executeFullStop("Settling after " + statusMsg).
+  //executeFullStop("Settling after " + statusMsg).
+  wait 0.05.
 }
 
 //_________________________________________________
