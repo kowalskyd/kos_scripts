@@ -69,8 +69,8 @@ until false {
   waitForSunlight().
   waitForFullEC().
 
-  // Drive to destination using Curiosity Autonav (Cruise speed: 4.0 m/s, Arrival radius: 12 m)
-  driveToCoordinates(nextWp[0], nextWp[1], 4.0, 12.0, false, waypointIndex, startGeo).
+  // Drive to destination using Curiosity Autonav (Cruise speed: 4.0 m/s, Arrival radius: 120 m)
+  driveToCoordinates(nextWp[0], nextWp[1], 8.0, 120.0, false, waypointIndex, startGeo).
   
   // Arrived at waypoint - deploy & transmit science suite
   runScienceExperiments().
