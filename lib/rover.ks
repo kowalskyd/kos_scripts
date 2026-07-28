@@ -22,32 +22,19 @@ local function padRight {
   return padded.
 }
 
-// Queries surface sector / biome safely without crashing across kOS versions
+// Queries surface biome safely using native KSP body biome data
 global function getCurrentBiome {
-  // 1. Try SCANsat addon if installed
+  // 1. Try native kOS body biome query (returns real KSP biome name, e.g. "Highlands", "Midlands")
+  if ship:body:hasSuffix("biomeof") {
+    return ship:body:biomeof(ship:geoposition).
+  }
+
+  // 2. Try SCANsat addon if installed
   if defined addons and addons:hasSuffix("scansat") {
     return addons:scansat:currentbiome().
   }
   
-  // 2. Try to extract biome from active science experiment data
-  for p in ship:parts {
-    for m in p:modules {
-      if m = "ModuleScienceExperiment" {
-        local exp is p:getModule("ModuleScienceExperiment").
-        if exp:hasdata and exp:data:length > 0 {
-          local title is exp:data[0]:title.
-          if title:contains(" from ") {
-            return title:split(" from ")[1].
-          }
-        }
-      }
-    }
-  }
-  
-  // 3. Coordinate Sector Fallback (Unique 0.05-deg geographical grid cell)
-  local sectorLat is round(ship:geoposition:lat * 20) / 20.
-  local sectorLng is round(ship:geoposition:lng * 20) / 20.
-  return "Sector (" + sectorLat + ", " + sectorLng + ")".
+  return "Surface".
 }
 
 // Checks if the Sun is above the horizon at the rover's current location
@@ -865,60 +852,46 @@ global function driveToCoordinates {
   }
 }
 
-// Rapid Batched Science Suite Deployment & Collection
+// Deploy and transmit/store science experiments
 global function runScienceExperiments {
-  // Only pause for battery recharge if EC is critically low (< 20%)
-  local ecData is getECInfo().
-  if ecData[1] > 0 and (ecData[0] / ecData[1]) < 0.20 {
-    waitForFullEC().
-  }
+  waitForSunlight().
+  waitForFullEC().
 
   set lastScienceBiome to getCurrentBiome().
-  updateRoverTelemetry(ship:geoposition, "Running Science Suite (" + lastScienceBiome + ")...").
+  print "Deploying science suite (" + lastScienceBiome + ")..." at (0, 14).
 
   local experimentsList is list().
   for p in ship:parts {
     for m in p:modules {
       if m = "ModuleScienceExperiment" {
-        local exp is p:getModule("ModuleScienceExperiment").
-        if not exp:inoperable {
-          experimentsList:add(exp).
-        }
+        experimentsList:add(p:getModule("ModuleScienceExperiment")).
       }
     }
   }
-
+  
   if experimentsList:length = 0 {
-    updateRoverTelemetry(ship:geoposition, "No active science experiments found.").
+    print "No science experiments found on vessel." at (0, 14).
     return.
   }
 
-  // Step 1: Deploy ALL sensors simultaneously
-  updateRoverTelemetry(ship:geoposition, "Deploying " + experimentsList:length + " science sensors...").
+  local commsConnected is ship:connection:isconnected.
+  
   for exp in experimentsList {
     if not exp:hasdata {
       exp:deploy().
+      local startWait is time:seconds.
+      wait until exp:hasdata or (time:seconds - startWait > 5).
+    }
+    
+    if exp:hasdata and commsConnected {
+      exp:transmit().
+      local tStart is time:seconds.
+      wait until (not exp:hasdata) or (time:seconds - tStart > 8).
     }
   }
-
-  wait 0.8. // Allow sensors 0.8s to populate data
-
-  // Step 2: Transmit all data in parallel if comms connected
-  local commsConnected is ship:connection:isconnected.
-  if commsConnected {
-    updateRoverTelemetry(ship:geoposition, "Transmitting science data...").
-    for exp in experimentsList {
-      if exp:hasdata {
-        exp:transmit().
-      }
-    }
-    wait 0.5.
-  }
-
-  // Step 3: Collect all data into Science Container (ESU)
+  
   local containerList is ship:modulesNamed("ModuleScienceContainer").
   if containerList:length > 0 {
-    updateRoverTelemetry(ship:geoposition, "Storing data in Science Container...").
     local container is containerList[0].
     if container:hasaction("collect all") {
       container:doAction("collect all", true).
@@ -927,17 +900,25 @@ global function runScienceExperiments {
     } else if container:hasevent("container: collect all") {
       container:doEvent("container: collect all").
     }
-    wait 0.5.
+    wait 1.0.
   }
 
-  // Step 4: Reset sensors if data remains untransmitted (Out of comms fallback)
   for exp in experimentsList {
     if exp:hasdata {
-      if exp:hasevent("reset experiment") { exp:doEvent("reset experiment"). }
-      else if exp:hasevent("reset") { exp:doEvent("reset"). }
-      else if exp:hasaction("reset") { exp:doAction("reset", true). }
+      print "Out of Comms Range: Clearing sensor for next waypoint..." at (0, 14).
+      if exp:hasevent("reset experiment") {
+        exp:doEvent("reset experiment").
+      } else if exp:hasevent("reset") {
+        exp:doEvent("reset").
+      } else if exp:hasaction("reset") {
+        exp:doAction("reset", true).
+      } else if exp:hasevent("discard data") {
+        exp:doEvent("discard data").
+      } else if exp:hasevent("dump data") {
+        exp:doEvent("dump data").
+      }
     }
   }
-
-  updateRoverTelemetry(ship:geoposition, "Science complete for: " + lastScienceBiome).
+  
+  print "Science processed for: " + lastScienceBiome at (0, 14).
 }
