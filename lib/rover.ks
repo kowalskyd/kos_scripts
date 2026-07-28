@@ -865,49 +865,60 @@ global function driveToCoordinates {
   }
 }
 
-// Deploy and transmit/store science experiments
+// Rapid Batched Science Suite Deployment & Collection
 global function runScienceExperiments {
-  waitForSunlight().
-  waitForFullEC().
+  // Only pause for battery recharge if EC is critically low (< 20%)
+  local ecData is getECInfo().
+  if ecData[1] > 0 and (ecData[0] / ecData[1]) < 0.20 {
+    waitForFullEC().
+  }
 
   set lastScienceBiome to getCurrentBiome().
-  updateRoverTelemetry(ship:geoposition, "Deploying science (" + lastScienceBiome + ")...").
+  updateRoverTelemetry(ship:geoposition, "Running Science Suite (" + lastScienceBiome + ")...").
 
   local experimentsList is list().
   for p in ship:parts {
     for m in p:modules {
       if m = "ModuleScienceExperiment" {
-        experimentsList:add(p:getModule("ModuleScienceExperiment")).
+        local exp is p:getModule("ModuleScienceExperiment").
+        if not exp:inoperable {
+          experimentsList:add(exp).
+        }
       }
     }
   }
-  
+
   if experimentsList:length = 0 {
-    updateRoverTelemetry(ship:geoposition, "No science experiments found on vessel.").
+    updateRoverTelemetry(ship:geoposition, "No active science experiments found.").
     return.
   }
 
-  local commsConnected is ship:connection:isconnected.
-  
+  // Step 1: Deploy ALL sensors simultaneously
+  updateRoverTelemetry(ship:geoposition, "Deploying " + experimentsList:length + " science sensors...").
   for exp in experimentsList {
     if not exp:hasdata {
-      updateRoverTelemetry(ship:geoposition, "Deploying sensors...").
       exp:deploy().
-      local startWait is time:seconds.
-      wait until exp:hasdata or (time:seconds - startWait > 5).
-    }
-    
-    if exp:hasdata and commsConnected {
-      updateRoverTelemetry(ship:geoposition, "Transmitting science data...").
-      exp:transmit().
-      local tStart is time:seconds.
-      wait until (not exp:hasdata) or (time:seconds - tStart > 8).
     }
   }
-  
+
+  wait 0.8. // Allow sensors 0.8s to populate data
+
+  // Step 2: Transmit all data in parallel if comms connected
+  local commsConnected is ship:connection:isconnected.
+  if commsConnected {
+    updateRoverTelemetry(ship:geoposition, "Transmitting science data...").
+    for exp in experimentsList {
+      if exp:hasdata {
+        exp:transmit().
+      }
+    }
+    wait 0.5.
+  }
+
+  // Step 3: Collect all data into Science Container (ESU)
   local containerList is ship:modulesNamed("ModuleScienceContainer").
   if containerList:length > 0 {
-    updateRoverTelemetry(ship:geoposition, "Storing data in science container...").
+    updateRoverTelemetry(ship:geoposition, "Storing data in Science Container...").
     local container is containerList[0].
     if container:hasaction("collect all") {
       container:doAction("collect all", true).
@@ -916,25 +927,17 @@ global function runScienceExperiments {
     } else if container:hasevent("container: collect all") {
       container:doEvent("container: collect all").
     }
-    wait 1.0.
+    wait 0.5.
   }
 
+  // Step 4: Reset sensors if data remains untransmitted (Out of comms fallback)
   for exp in experimentsList {
     if exp:hasdata {
-      updateRoverTelemetry(ship:geoposition, "Out of Comms: Resetting sensors for next location...").
-      if exp:hasevent("reset experiment") {
-        exp:doEvent("reset experiment").
-      } else if exp:hasevent("reset") {
-        exp:doEvent("reset").
-      } else if exp:hasaction("reset") {
-        exp:doAction("reset", true).
-      } else if exp:hasevent("discard data") {
-        exp:doEvent("discard data").
-      } else if exp:hasevent("dump data") {
-        exp:doEvent("dump data").
-      }
+      if exp:hasevent("reset experiment") { exp:doEvent("reset experiment"). }
+      else if exp:hasevent("reset") { exp:doEvent("reset"). }
+      else if exp:hasaction("reset") { exp:doAction("reset", true). }
     }
   }
-  
-  updateRoverTelemetry(ship:geoposition, "Science processed for: " + lastScienceBiome).
+
+  updateRoverTelemetry(ship:geoposition, "Science complete for: " + lastScienceBiome).
 }
