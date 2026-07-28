@@ -44,8 +44,8 @@ until false {
   local nextWp is list().
   local attempts is 0.
   until attempts >= 15 {
-    local stepN is (random() * 2000) - 1000.
-    local stepE is (random() * 2000) - 1000.
+    local stepN is (random() * 1000) - 600.
+    local stepE is (random() * 1000) - 600.
     
     local candN is currentOffsetN + stepN.
     local candE is currentOffsetE + stepE.
@@ -70,7 +70,7 @@ until false {
   waitForFullEC().
 
   // Drive to destination using Curiosity Autonav (Cruise speed: 4.0 m/s, Arrival radius: 120 m)
-  driveToCoordinates(nextWp[0], nextWp[1], 8.0, 120.0, false, waypointIndex, startGeo).
+  driveToCoordinates(nextWp[0], nextWp[1], 8.0, 50.0, false, waypointIndex, startGeo).
   
   // Arrived at waypoint - deploy & transmit science suite
   runScienceExperiments().
