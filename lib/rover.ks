@@ -871,7 +871,7 @@ global function runScienceExperiments {
   waitForFullEC().
 
   set lastScienceBiome to getCurrentBiome().
-  print "Deploying science suite (" + lastScienceBiome + ")..." at (0, 14).
+  updateRoverTelemetry(ship:geoposition, "Deploying science (" + lastScienceBiome + ")...").
 
   local experimentsList is list().
   for p in ship:parts {
@@ -883,7 +883,7 @@ global function runScienceExperiments {
   }
   
   if experimentsList:length = 0 {
-    print "No science experiments found on vessel." at (0, 14).
+    updateRoverTelemetry(ship:geoposition, "No science experiments found on vessel.").
     return.
   }
 
@@ -891,12 +891,14 @@ global function runScienceExperiments {
   
   for exp in experimentsList {
     if not exp:hasdata {
+      updateRoverTelemetry(ship:geoposition, "Deploying sensors...").
       exp:deploy().
       local startWait is time:seconds.
       wait until exp:hasdata or (time:seconds - startWait > 5).
     }
     
     if exp:hasdata and commsConnected {
+      updateRoverTelemetry(ship:geoposition, "Transmitting science data...").
       exp:transmit().
       local tStart is time:seconds.
       wait until (not exp:hasdata) or (time:seconds - tStart > 8).
@@ -905,6 +907,7 @@ global function runScienceExperiments {
   
   local containerList is ship:modulesNamed("ModuleScienceContainer").
   if containerList:length > 0 {
+    updateRoverTelemetry(ship:geoposition, "Storing data in science container...").
     local container is containerList[0].
     if container:hasaction("collect all") {
       container:doAction("collect all", true).
@@ -918,7 +921,7 @@ global function runScienceExperiments {
 
   for exp in experimentsList {
     if exp:hasdata {
-      print "Out of Comms Range: Clearing sensor for next waypoint..." at (0, 14).
+      updateRoverTelemetry(ship:geoposition, "Out of Comms: Resetting sensors for next location...").
       if exp:hasevent("reset experiment") {
         exp:doEvent("reset experiment").
       } else if exp:hasevent("reset") {
@@ -933,5 +936,5 @@ global function runScienceExperiments {
     }
   }
   
-  print "Science processed for: " + lastScienceBiome at (0, 14).
+  updateRoverTelemetry(ship:geoposition, "Science processed for: " + lastScienceBiome).
 }
