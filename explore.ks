@@ -6,19 +6,18 @@ wait 0.1.
 
 clearScreen.
 print "=== Curiosity-Class Autonomous Rover Mission Initiated ===".
-print "Deploying communication systems and solar panels...".
-wait 1.
+print "Booting up, please wait...".
 
-// Deploy communication antennas & solar arrays
+
+
 panels on.
 if antenna:length > 0 {
   deployAntenna().
-  print "Deploying Antenna...".
+
 }
-wait 1.
 
 // Start continuous cinematic camera director cuts around the rover
-playRoverCinematicScene(600).
+playRoverCinematicScene(200).
 
 // Get starting position
 local startGeo is ship:geoposition.

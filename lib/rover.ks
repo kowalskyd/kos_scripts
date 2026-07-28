@@ -26,7 +26,12 @@ local function padRight {
 global function getCurrentBiome {
   // 1. Try SCANsat addon if installed
   if defined addons and addons:hasSuffix("scansat") {
-    return addons:scansat:currentbiome().
+    local scanAddon is addons:scansat.
+    if scanAddon:hasSuffix("currentbiome") {
+      return scanAddon:currentbiome().
+    } else if scanAddon:hasSuffix("biome") {
+      return scanAddon:biome(ship:geoposition).
+    }
   }
   
   // 2. Try to extract biome from active science experiment data
@@ -74,7 +79,18 @@ global function getECInfo {
 global function getSCANsatSlope {
   parameter lat, lng.
   if defined addons and addons:hasSuffix("scansat") {
-    return addons:scansat:scansatslope(lat, lng).
+    local scanAddon is addons:scansat.
+    local geo is latlng(lat, lng).
+    local sVal is 0.
+    if scanAddon:hasSuffix("slope") {
+      set sVal to scanAddon:slope(ship:body, geo).
+    } else if scanAddon:hasSuffix("scansatslope") {
+      set sVal to scanAddon:scansatslope(ship:body, geo).
+    } else if scanAddon:hasSuffix("slopefor") {
+      set sVal to scanAddon:slopefor(ship:body, geo).
+    }
+    if sVal < 0 or sVal > 89 { return 0. }
+    return sVal.
   }
   return 0.
 }
