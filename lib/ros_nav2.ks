@@ -16,6 +16,8 @@ global rosCostmap is list().
 global rosBestOffset is 0.
 global rosLowestCost is 0.
 global rosCurrentStatus is "Initializing ROS 2 Nav2 Engine...".
+global rosZoneAnchorGeo is 0.
+global rosActiveTargetGeo is 0.
 
 // Blacklists an unnavigable sector key (ocean, steep wall, or unreachable target)
 global function rosBlacklistSector {
@@ -54,11 +56,11 @@ global function rosGetGravityRatio {
 }
 
 // Dynamic maximum climb angle scaled by surface gravity
-// Low gravity (Mun ~0.166 g) -> max climb ~13 deg
-// Standard gravity (Kerbin 1.0 g) -> max climb up to 18 deg
+// Low gravity (Minmus ~0.05g) -> max climb ~20 deg
+// Standard gravity (Kerbin 1.0g) -> max climb up to 24 deg
 global function rosGetMaxClimbAngle {
   local gRatio is rosGetGravityRatio().
-  return max(13.0, min(18.0, 12.0 + (6.0 * gRatio))).
+  return max(20.0, min(25.0, 18.0 + (6.0 * gRatio))).
 }
 
 // Dynamic maximum safe speed scaled by sqrt(gravity ratio)
@@ -352,97 +354,84 @@ global function rosGetSectorKey {
   return bodyName + "_" + latIdx + "_" + lngIdx.
 }
 
-// Generates candidate frontier waypoints around rover and picks best information-gain target
+// Generates Roborock Boustrophedon (lawnmower) grid sweep targets across 1.0km x 1.0km zones
 global function rosSelectFrontierTarget {
   parameter currentGeo.
-  parameter scanRadius is 600. // meters
+  parameter scanRadius is 200. // sector step size (meters)
+
+  if rosZoneAnchorGeo = 0 {
+    set rosZoneAnchorGeo to currentGeo.
+  }
 
   local currentKey is rosGetSectorKey(currentGeo).
   if not rosVisitedSectors:contains(currentKey) {
     rosVisitedSectors:add(currentKey).
   }
 
-  local candidateFrontiers is list().
-  local angles is list(0, 45, 90, 135, 180, 225, 270, 315).
   local bodyRadius is ship:body:radius.
+  local maxClimb is rosGetMaxClimbAngle().
 
-  for ang in angles {
-    local offsetN is scanRadius * cos(ang).
-    local offsetE is scanRadius * sin(ang).
+  // 5x5 Boustrophedon (lawnmower) sweep sequence (row-by-row alternating direction)
+  local sweepSeq is list(
+    list(-2,-2), list(-2,-1), list(-2,0), list(-2,1), list(-2,2),
+    list(-1,2),  list(-1,1),  list(-1,0), list(-1,-1), list(-1,-2),
+    list(0,-2),  list(0,-1),  list(0,0),  list(0,1),  list(0,2),
+    list(1,2),   list(1,1),   list(1,0),  list(1,-1),  list(1,-2),
+    list(2,-2),  list(2,-1),  list(2,0),  list(2,1),  list(2,2)
+  ).
+
+  // Search current 1.0km x 1.0km zone for next unvisited and unblacklisted sector
+  for cellPair in sweepSeq {
+    local rowOff is cellPair[0].
+    local colOff is cellPair[1].
+
+    local offsetN is rowOff * 200.
+    local offsetE is colOff * 200.
 
     local latDeg is (offsetN / bodyRadius) * (180 / constant:pi).
-    local lngDeg is (offsetE / (bodyRadius * cos(currentGeo:lat))) * (180 / constant:pi).
+    local lngDeg is (offsetE / (bodyRadius * cos(rosZoneAnchorGeo:lat))) * (180 / constant:pi).
 
-    local candGeo is latlng(currentGeo:lat + latDeg, currentGeo:lng + lngDeg).
+    local candGeo is latlng(rosZoneAnchorGeo:lat + latDeg, rosZoneAnchorGeo:lng + lngDeg).
     local candKey is rosGetSectorKey(candGeo).
 
-    local macroSlope is getSCANsatSlope(candGeo:lat, candGeo:lng).
-    local maxClimb is rosGetMaxClimbAngle().
+    if not rosVisitedSectors:contains(candKey) and not rosBlacklistedSectors:contains(candKey) {
+      local macroSlope is getSCANsatSlope(candGeo:lat, candGeo:lng).
 
-    // Layer 2 SCANsat & Layer 1 Elevation Pre-Filter:
-    // Automatically blacklist liquid ocean (height <= 5.0m) and steep mountain slopes
-    local pathClear is true.
-    for stepFrac in list(0.33, 0.66, 1.0) {
-      local pN is offsetN * stepFrac.
-      local pE is offsetE * stepFrac.
-      local pLat is (pN / bodyRadius) * (180 / constant:pi).
-      local pLng is (pE / (bodyRadius * cos(currentGeo:lat))) * (180 / constant:pi).
-      local pGeo is latlng(currentGeo:lat + pLat, currentGeo:lng + pLng).
-      if pGeo:terrainheight <= 5.0 {
-        set pathClear to false.
-        break.
-      }
-    }
-
-    if not pathClear or candGeo:terrainheight <= 5.0 or macroSlope >= (maxClimb + 2.0) {
-      rosBlacklistSector(candKey, "Water Body / Mountain Risk").
-    }
-
-    // Skip sector if explicitly blacklisted
-    if not rosBlacklistedSectors:contains(candKey) {
-      local visitedPenalty is 0.
-      if rosVisitedSectors:contains(candKey) {
-        set visitedPenalty to 500.
+      // 3-Point Elevation & Water Path Probe
+      local pathClear is true.
+      for stepFrac in list(0.33, 0.66, 1.0) {
+        local pN is offsetN * stepFrac.
+        local pE is offsetE * stepFrac.
+        local pLat is (pN / bodyRadius) * (180 / constant:pi).
+        local pLng is (pE / (bodyRadius * cos(currentGeo:lat))) * (180 / constant:pi).
+        local pGeo is latlng(currentGeo:lat + pLat, currentGeo:lng + pLng).
+        if pGeo:terrainheight <= 5.0 {
+          set pathClear to false.
+          break.
+        }
       }
 
-      // Information Gain Score Formula:
-      // High score for unvisited sector, low macro slope risk, moderate distance
-      local score is 1000 - visitedPenalty - (macroSlope * 25.0).
-      
-      local item is lexicon().
-      set item["geo"] to candGeo.
-      set item["score"] to score.
-      set item["key"] to candKey.
-      candidateFrontiers:add(item).
+      if not pathClear or candGeo:terrainheight <= 5.0 or macroSlope >= (maxClimb + 3.0) {
+        rosBlacklistSector(candKey, "Water Body / Mountain Risk").
+      } else {
+        return candGeo.
+      }
     }
   }
 
-  if candidateFrontiers:length = 0 {
-    // Fallback: Scan inland at smaller radius for un-blacklisted sector
-    for randAng in list(180, 225, 135, 270, 90) {
-      local latDeg is ((400 * cos(randAng)) / bodyRadius) * (180 / constant:pi).
-      local lngDeg is ((400 * sin(randAng)) / (bodyRadius * cos(currentGeo:lat))) * (180 / constant:pi).
-      local fbGeo is latlng(currentGeo:lat + latDeg, currentGeo:lng + lngDeg).
-      local fbKey is rosGetSectorKey(fbGeo).
-      if not rosBlacklistedSectors:contains(fbKey) {
-        return fbGeo.
-      }
-    }
-    // Ultimate fallback: 300m inland
-    local latDeg is ((300 * cos(180)) / bodyRadius) * (180 / constant:pi).
-    local lngDeg is ((300 * sin(180)) / (bodyRadius * cos(currentGeo:lat))) * (180 / constant:pi).
-    return latlng(currentGeo:lat + latDeg, currentGeo:lng + lngDeg).
-  }
+  // All 25 sectors in current 1.0km zone are mapped (X or !)! Shift anchor 1.0km East to next zone!
+  local shiftN is 0.
+  local shiftE is 1000.
+  local latDeg is (shiftN / bodyRadius) * (180 / constant:pi).
+  local lngDeg is (shiftE / (bodyRadius * cos(rosZoneAnchorGeo:lat))) * (180 / constant:pi).
+  set rosZoneAnchorGeo to latlng(rosZoneAnchorGeo:lat + latDeg, rosZoneAnchorGeo:lng + lngDeg).
 
-  // Sort candidate frontiers by score descending
-  local bestCand is candidateFrontiers[0].
-  for cand in candidateFrontiers {
-    if cand["score"] > bestCand["score"] {
-      set bestCand to cand.
-    }
-  }
+  hudText("1.0km Zone Mapping Complete! Shifting Anchor East to Next 1km Zone...", 5, 2, 25, rgb(0.2, 0.9, 0.4), true).
 
-  return bestCand["geo"].
+  // Return first target in new zone
+  local firstLatDeg is ((-2 * 200) / bodyRadius) * (180 / constant:pi).
+  local firstLngDeg is ((-2 * 200) / (bodyRadius * cos(rosZoneAnchorGeo:lat))) * (180 / constant:pi).
+  return latlng(rosZoneAnchorGeo:lat + firstLatDeg, rosZoneAnchorGeo:lng + firstLngDeg).
 }
 
 //_________________________________________________
@@ -451,8 +440,25 @@ global function rosSelectFrontierTarget {
 
 // Displays live ROS 2 Nav2 telemetry HUD with ASCII radar costmap
 global function rosUpdateTelemetry {
-  parameter targetGeo.
+  parameter targetGeo is 0.
   parameter statusMsg is "".
+
+  local isShipGeo is false.
+  if targetGeo:isType("GeoCoordinates") {
+    if abs(targetGeo:lat - ship:geoposition:lat) < 0.0001 and abs(targetGeo:lng - ship:geoposition:lng) < 0.0001 {
+      set isShipGeo to true.
+    }
+  }
+
+  if targetGeo = 0 or isShipGeo {
+    if rosActiveTargetGeo <> 0 {
+      set targetGeo to rosActiveTargetGeo.
+    } else {
+      set targetGeo to ship:geoposition.
+    }
+  } else {
+    set rosActiveTargetGeo to targetGeo.
+  }
 
   // Continuous Visited Sector Painting: Log current position to rosVisitedSectors
   local currentSectorKey is rosGetSectorKey(ship:geoposition).
@@ -587,7 +593,7 @@ global function rosRenderGlobalFrontierMap {
 
     from { local colIdx is -2. } until colIdx > 2 step { set colIdx to colIdx + 1. } do {
       local lngIdx is curLngIdx + colIdx.
-      local key is latIdx + "_" + lngIdx.
+      local key is ship:body:name + "_" + latIdx + "_" + lngIdx.
 
       if rowIdx = 0 and colIdx = 0 {
         set rowStr to rowStr + "@  ".

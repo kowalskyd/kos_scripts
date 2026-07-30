@@ -312,9 +312,13 @@ global function checkTiltHazards {
   local currentPitch is 90 - vAng(ship:up:vector, ship:facing:forevector).
   local currentRoll  is 90 - vAng(ship:up:vector, ship:facing:starvector).
 
-  if abs(currentRoll) > 13.5 {
+  local maxClimb is 20.0.
+  if defined rosGetMaxClimbAngle { set maxClimb to rosGetMaxClimbAngle(). }
+  local maxRollThreshold is max(22.0, maxClimb + 2.0).
+
+  if abs(currentRoll) > maxRollThreshold {
     return list(true, "CRITICAL ROLL TILT (" + round(currentRoll, 1) + " deg)", currentRoll, currentPitch).
-  } else if abs(currentPitch) > 22.0 {
+  } else if abs(currentPitch) > (maxRollThreshold + 5.0) {
     return list(true, "STEEP PITCH INCLINE (" + round(currentPitch, 1) + " deg)", currentRoll, currentPitch).
   }
 
@@ -654,6 +658,11 @@ global function updateRoverTelemetry {
   parameter targetGeo.
   parameter statusMsg is "".
 
+  if defined rosUpdateTelemetry {
+    rosUpdateTelemetry(targetGeo, statusMsg).
+    return.
+  }
+
   local curSpd is ship:groundspeed.
   local currentBiome is getCurrentBiome().
   local distTarget is targetGeo:distance.
@@ -691,7 +700,7 @@ global function updateRoverTelemetry {
   if abs(currentRoll) > 10 or abs(currentPitch) > 15 { set stabilityText to "[HAZARD]". }
 
   print "==================================================" at (0, 0).
-  print "=== CURIOSITY AUTONAV MISSION TELEMETRY ===" at (0, 1).
+  print "=== ROS 2 NAV2 AUTONAV MISSION CONTROL ===" at (0, 1).
   print "==================================================" at (0, 2).
   print "Waypoint Target: Waypoint #" + autonavWaypointIndex + "  [Lat:" + round(targetGeo:lat,2) + ", Lng:" + round(targetGeo:lng,2) + "]" at (0, 3).
   print "Target Distance: " + padRight(round(distTarget, 1) + " m (Bearing: " + targetBearing + " deg)", 30) at (0, 4).

@@ -21,6 +21,8 @@ wait 0.1.
 // Reset spatial memory lists for fresh exploration run
 set rosVisitedSectors to list().
 set rosBlacklistedSectors to list().
+set rosZoneAnchorGeo to ship:geoposition.
+set rosActiveTargetGeo to 0.
 
 clearScreen.
 print "==================================================".
