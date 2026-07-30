@@ -169,11 +169,11 @@ if hasCameraAddon {
       if not MAPVIEW and kuniverse:timewarp:rate = 1 {
         set addons:camera:flightcamera:heading to addons:camera:flightcamera:heading + 0.03.
         
-        // Keep pitch and distance within a cinematic sweet spot
-        if addons:camera:flightcamera:pitch < 12 { set addons:camera:flightcamera:pitch to 12. }
-        if addons:camera:flightcamera:pitch > 35 { set addons:camera:flightcamera:pitch to 35. }
-        if addons:camera:flightcamera:distance > 100 { set addons:camera:flightcamera:distance to 100. }
-        if addons:camera:flightcamera:distance < 25 { set addons:camera:flightcamera:distance to 25. }
+        // Keep pitch and distance within elevated rear cone (Pitch >= 18 deg to prevent ground clipping)
+        if addons:camera:flightcamera:pitch < 18 { set addons:camera:flightcamera:pitch to 18. }
+        if addons:camera:flightcamera:pitch > 45 { set addons:camera:flightcamera:pitch to 45. }
+        if addons:camera:flightcamera:distance > 60 { set addons:camera:flightcamera:distance to 60. }
+        if addons:camera:flightcamera:distance < 8 { set addons:camera:flightcamera:distance to 8. }
       }
     }
     preserve.
@@ -490,37 +490,28 @@ global function getKerbinHeading {
 // Scene 12: Long Cinematic Rover Scene (Macro close-ups, wheel tracking, Kerbin-in-background, wide angle zooms)
 global function playRoverCinematicScene {
   parameter duration is -1.
+  parameter duration is 300.
   if not hasCameraAddon { return. }
-  if duration <= 0 { set duration to 600. } // Default 10 minutes of multi-cut sequence
-  
-  local sunH is getSunHeading().
-  local shipH is getShipHeading().
-  local kerbinH is getKerbinHeading().
-  local kerbinBgH is kerbinH + 180.
 
-  local cutTime is duration / 7.
+  local shipH is ship:heading.
+  local rearH is mod(shipH + 180 + 360, 360). // 180 deg behind rover facing vector
+  local cutTime is duration / 5.
 
   startCameraScene(list(
-    // Cut 1: Intimate Chassis Macro Close-Up — Super tight 3.8m focus on rover body & solar array
-    lexicon("duration", cutTime * 0.8, "startH", shipH + 140, "endH", shipH + 90, "startP", 6, "endP", 12, "startD", 3.8, "endD", 6.5),
+    // Cut 1: High Elevated Rear Tracking — Pitch 32° to 22°, Distance 28m to 16m
+    lexicon("duration", cutTime * 1.1, "startH", rearH - 25, "endH", rearH + 25, "startP", 32, "endP", 22, "startD", 28, "endD", 16),
 
-    // Cut 2: Kerbin Background Framing — Low-angle wide-zoom shot with Kerbin/Sky framed behind rover
-    lexicon("duration", cutTime * 1.2, "startH", kerbinBgH - 45, "endH", kerbinBgH + 45, "startP", 8, "endP", 14, "startD", 28, "endD", 16),
+    // Cut 2: Medium Rear Chase Cone — Pitch 20° to 35°, Distance 12m to 22m
+    lexicon("duration", cutTime * 1.2, "startH", rearH + 30, "endH", rearH - 20, "startP", 20, "endP", 35, "startD", 12, "endD", 22),
 
-    // Cut 3: Low Ground Suspension & Wheel Pass — Ground-skimming 4m tracking shot of wheel movement
-    lexicon("duration", cutTime, "startH", sunH - 120, "endH", sunH - 30, "startP", 4, "endP", 9, "startD", 4.2, "endD", 8.5),
+    // Cut 3: Elevated Quarter Rear View — Pitch 38° to 24°, Distance 35m to 18m
+    lexicon("duration", cutTime * 0.9, "startH", rearH - 35, "endH", rearH + 10, "startP", 38, "endP", 24, "startD", 35, "endD", 18),
 
-    // Cut 4: Full 360° Continuous Orbiting Sweep — Smooth 360-degree rotation around the rover
-    lexicon("duration", cutTime * 1.4, "startH", sunH, "endH", sunH + 360, "startP", 15, "endP", 22, "startD", 12, "endD", 24),
+    // Cut 4: Deep Rear Zoom & Sweep — Pitch 22° to 38°, Distance 8.5m to 28m
+    lexicon("duration", cutTime * 1.0, "startH", rearH + 15, "endH", rearH - 30, "startP", 22, "endP", 38, "startD", 8.5, "endD", 28),
 
-    // Cut 5: Front Bumper / Ledge Tracking Close-Up — Front 3/4 medium close-up facing path ahead
-    lexicon("duration", cutTime * 0.9, "startH", shipH - 25, "endH", shipH + 25, "startP", 8, "endP", 14, "startD", 5.0, "endD", 9.5),
-
-    // Cut 6: High Satellite Observer View — High-angle bird's eye orbit tracking terrain movement
-    lexicon("duration", cutTime * 0.7, "startH", kerbinBgH + 30, "endH", kerbinBgH - 30, "startP", 48, "endP", 32, "startD", 45, "endD", 28),
-
-    // Cut 7: Ultra-Wide Landscape Vista Zoom-Out — Cinematic expansion from close rover to wide terrain
-    lexicon("duration", cutTime * 1.0, "startH", sunH + 90, "endH", sunH + 210, "startP", 10, "endP", 25, "startD", 10, "endD", 65)
+    // Cut 5: High Satellite Rear Overlook — Pitch 42° to 28°, Distance 40m to 25m
+    lexicon("duration", cutTime * 0.8, "startH", rearH - 20, "endH", rearH + 20, "startP", 42, "endP", 28, "startD", 40, "endD", 25)
   )).
 }
 

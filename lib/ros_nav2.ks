@@ -345,19 +345,31 @@ global function rosCalculateDwaPath {
 // 5. ROS 2 FRONTIER-BASED EXPLORATION ENGINE
 //_________________________________________________
 
-// Helper: Converts lat/lng into a coarse sector grid key prefixed by body name (~200m resolution)
+// Calculates gravity-scaled sector step size in meters (Kerbin 200m -> Mun 100m -> Minmus 75m)
+global function rosGetGravitySectorStep {
+  local gRatio is rosGetGravityRatio().
+  local stepSize is round(max(75.0, min(200.0, 200.0 * sqrt(max(0.05, gRatio))))).
+  return stepSize.
+}
+
+// Converts lat/lng into a coarse sector grid key prefixed by body name & dynamic step size
 global function rosGetSectorKey {
   parameter geo.
   local bodyName is ship:body:name.
-  local latIdx is round(geo:lat * 50).
-  local lngIdx is round(geo:lng * 50).
+  local stepSize is rosGetGravitySectorStep().
+  local degStep is (stepSize / ship:body:radius) * (180 / constant:pi).
+  local latIdx is round(geo:lat / degStep).
+  local lngIdx is round(geo:lng / degStep).
   return bodyName + "_" + latIdx + "_" + lngIdx.
 }
 
-// Generates Roborock Boustrophedon (lawnmower) grid sweep targets across 1.0km x 1.0km zones
+// Macro Zone Highway Selector: Target entry cell of the next Zone to the East
 global function rosSelectFrontierTarget {
   parameter currentGeo.
-  parameter scanRadius is 200. // sector step size (meters)
+  parameter scanRadius is 0. // unused
+
+  local stepSize is rosGetGravitySectorStep().
+  local zoneSize is stepSize * 5.
 
   if rosZoneAnchorGeo = 0 {
     set rosZoneAnchorGeo to currentGeo.
@@ -371,67 +383,77 @@ global function rosSelectFrontierTarget {
   local bodyRadius is ship:body:radius.
   local maxClimb is rosGetMaxClimbAngle().
 
-  // 5x5 Boustrophedon (lawnmower) sweep sequence (row-by-row alternating direction)
-  local sweepSeq is list(
-    list(-2,-2), list(-2,-1), list(-2,0), list(-2,1), list(-2,2),
-    list(-1,2),  list(-1,1),  list(-1,0), list(-1,-1), list(-1,-2),
-    list(0,-2),  list(0,-1),  list(0,0),  list(0,1),  list(0,2),
-    list(1,2),   list(1,1),   list(1,0),  list(1,-1),  list(1,-2),
-    list(2,-2),  list(2,-1),  list(2,0),  list(2,1),  list(2,2)
-  ).
+  // Primary Highway Target: Next Zone East (zoneSize meters East of current zone anchor)
+  local shiftN is 0.
+  local shiftE is zoneSize.
 
-  // Search current 1.0km x 1.0km zone for next unvisited and unblacklisted sector
-  for cellPair in sweepSeq {
-    local rowOff is cellPair[0].
-    local colOff is cellPair[1].
+  local latDeg is (shiftN / bodyRadius) * (180 / constant:pi).
+  local lngDeg is (shiftE / (bodyRadius * cos(rosZoneAnchorGeo:lat))) * (180 / constant:pi).
+  local eastZoneGeo is latlng(rosZoneAnchorGeo:lat + latDeg, rosZoneAnchorGeo:lng + lngDeg).
+  local eastZoneKey is rosGetSectorKey(eastZoneGeo).
 
-    local offsetN is rowOff * 200.
-    local offsetE is colOff * 200.
-
-    local latDeg is (offsetN / bodyRadius) * (180 / constant:pi).
-    local lngDeg is (offsetE / (bodyRadius * cos(rosZoneAnchorGeo:lat))) * (180 / constant:pi).
-
-    local candGeo is latlng(rosZoneAnchorGeo:lat + latDeg, rosZoneAnchorGeo:lng + lngDeg).
-    local candKey is rosGetSectorKey(candGeo).
-
-    if not rosVisitedSectors:contains(candKey) and not rosBlacklistedSectors:contains(candKey) {
-      local macroSlope is getSCANsatSlope(candGeo:lat, candGeo:lng).
-
-      // 3-Point Elevation & Water Path Probe
-      local pathClear is true.
-      for stepFrac in list(0.33, 0.66, 1.0) {
-        local pN is offsetN * stepFrac.
-        local pE is offsetE * stepFrac.
-        local pLat is (pN / bodyRadius) * (180 / constant:pi).
-        local pLng is (pE / (bodyRadius * cos(currentGeo:lat))) * (180 / constant:pi).
-        local pGeo is latlng(currentGeo:lat + pLat, currentGeo:lng + pLng).
-        if pGeo:terrainheight <= 5.0 {
-          set pathClear to false.
-          break.
-        }
-      }
-
-      if not pathClear or candGeo:terrainheight <= 5.0 or macroSlope >= (maxClimb + 3.0) {
-        rosBlacklistSector(candKey, "Water Body / Mountain Risk").
-      } else {
-        return candGeo.
-      }
+  // 3-Point Elevation & Water Path Probe toward East Zone
+  local pathClear is true.
+  for stepFrac in list(0.33, 0.66, 1.0) {
+    local pN is shiftN * stepFrac.
+    local pE is shiftE * stepFrac.
+    local pLat is (pN / bodyRadius) * (180 / constant:pi).
+    local pLng is (pE / (bodyRadius * cos(currentGeo:lat))) * (180 / constant:pi).
+    local pGeo is latlng(currentGeo:lat + pLat, currentGeo:lng + pLng).
+    if pGeo:terrainheight <= 5.0 {
+      set pathClear to false.
+      break.
     }
   }
 
-  // All 25 sectors in current 1.0km zone are mapped (X or !)! Shift anchor 1.0km East to next zone!
-  local shiftN is 0.
-  local shiftE is 1000.
-  local latDeg is (shiftN / bodyRadius) * (180 / constant:pi).
-  local lngDeg is (shiftE / (bodyRadius * cos(rosZoneAnchorGeo:lat))) * (180 / constant:pi).
-  set rosZoneAnchorGeo to latlng(rosZoneAnchorGeo:lat + latDeg, rosZoneAnchorGeo:lng + lngDeg).
+  // If direct East path is blocked by ocean/mountains, shift target 1 cell North or South
+  if not pathClear or eastZoneGeo:terrainheight <= 5.0 or getSCANsatSlope(eastZoneGeo:lat, eastZoneGeo:lng) >= (maxClimb + 3.0) {
+    rosBlacklistSector(eastZoneKey, "Water Body / Mountain Risk").
+    
+    // Probe North (+1 cell) vs South (-1 cell) detours
+    local northLatDeg is (stepSize / bodyRadius) * (180 / constant:pi).
+    local southLatDeg is ((-stepSize) / bodyRadius) * (180 / constant:pi).
+    local northGeo is latlng(eastZoneGeo:lat + northLatDeg, eastZoneGeo:lng).
+    local southGeo is latlng(eastZoneGeo:lat + southLatDeg, eastZoneGeo:lng).
 
-  hudText("1.0km Zone Mapping Complete! Shifting Anchor East to Next 1km Zone...", 5, 2, 25, rgb(0.2, 0.9, 0.4), true).
+    if northGeo:terrainheight > southGeo:terrainheight {
+      return northGeo.
+    } else {
+      return southGeo.
+    }
+  }
 
-  // Return first target in new zone
-  local firstLatDeg is ((-2 * 200) / bodyRadius) * (180 / constant:pi).
-  local firstLngDeg is ((-2 * 200) / (bodyRadius * cos(rosZoneAnchorGeo:lat))) * (180 / constant:pi).
-  return latlng(rosZoneAnchorGeo:lat + firstLatDeg, rosZoneAnchorGeo:lng + firstLngDeg).
+  return eastZoneGeo.
+}
+
+// 2.5D Cell-Stepping Detour: On barrier abort, shifts 1 cell North or South to bypass obstacle
+global function rosCellSteppingDetour {
+  local stepSize is rosGetGravitySectorStep().
+  local currentGeo is ship:geoposition.
+  local bodyRadius is ship:body:radius.
+
+  // Probe North (+1 cell) vs South (-1 cell) stepping targets
+  local nLatDeg is (stepSize / bodyRadius) * (180 / constant:pi).
+  local sLatDeg is ((-stepSize) / bodyRadius) * (180 / constant:pi).
+
+  local nGeo is latlng(currentGeo:lat + nLatDeg, currentGeo:lng).
+  local sGeo is latlng(currentGeo:lat + sLatDeg, currentGeo:lng).
+
+  local nH is nGeo:terrainheight.
+  local sH is sGeo:terrainheight.
+
+  local bestHDG is 0. // North
+  local detourGeo is nGeo.
+
+  if sH > nH {
+    set bestHDG to 180. // South
+    set detourGeo to sGeo.
+  }
+
+  hudText("2.5D Cell Detour: Stepping 1 Cell North/South to bypass barrier...", 4, 2, 25, rgb(0.2, 0.9, 0.4), true).
+
+  executePointTurn(bestHDG, "2.5D Cell Stepping Turn").
+  rosDriveToCoordinates(detourGeo:lat, detourGeo:lng, 3.5, 8.0, false).
 }
 
 //_________________________________________________
@@ -517,6 +539,12 @@ global function rosUpdateTelemetry {
     }
   }
 
+  local currentPitch is 90 - vAng(ship:up:vector, ship:facing:forevector).
+  local currentRoll  is 90 - vAng(ship:up:vector, ship:facing:starvector).
+
+  local stabilityTag is "[STABLE]".
+  if abs(currentRoll) > 15 or abs(currentPitch) > 18 { set stabilityTag to "[HAZARD]". }
+
   print "==================================================" at (0, 0).
   print "=== ROS 2 NAV2 AUTONAV MISSION CONTROL ===" at (0, 1).
   print "--------------------------------------------------" at (0, 2).
@@ -525,10 +553,11 @@ global function rosUpdateTelemetry {
   print padRight("SCANsat:  " + scansatShort, 50) at (0, 5).
   print padRight("Laser:    " + laserDistShort, 50) at (0, 6).
   print padRight("Speed:    " + round(curSpd,1) + "/" + round(dynamicSpeedCap,1) + " m/s | EC Charge: " + ecPct + "%", 50) at (0, 7).
-  print padRight("Corridor: " + pathText + " (Cost: " + round(rosLowestCost,1) + ")", 50) at (0, 8).
-  print padRight("Hazards:  " + negativeCount + " drop-offs, " + ridgeCount + " steep ridges", 50) at (0, 9).
-  print "--------------------------------------------------" at (0, 10).
-  print padRight("ROS 2 LOCAL COSTMAP RADAR (35m Ahead):", 50) at (0, 11).
+  print padRight("Angles:   Pitch: " + round(currentPitch,1) + "d | Roll: " + round(currentRoll,1) + "d " + stabilityTag, 50) at (0, 8).
+  print padRight("Corridor: " + pathText + " (Cost: " + round(rosLowestCost,1) + ")", 50) at (0, 9).
+  print padRight("Hazards:  " + negativeCount + " drop-offs, " + ridgeCount + " steep ridges", 50) at (0, 10).
+  print "--------------------------------------------------" at (0, 11).
+  print padRight("ROS 2 LOCAL COSTMAP RADAR (35m Ahead):", 50) at (0, 12).
 
   if rosCostmap:length >= 25 {
     from { local row is 4. } until row < 0 step { set row to row - 1. } do {
@@ -551,19 +580,19 @@ global function rosUpdateTelemetry {
         }
       }
       set rowStr to rowStr + "]  " + ((row + 1) * 7) + "m".
-      print padRight(rowStr, 50) at (0, 12 + (4 - row)).
+      print padRight(rowStr, 50) at (0, 13 + (4 - row)).
     }
-    print padRight("        [^]  Rover (Heading " + round(ship:heading, 1) + " deg)", 50) at (0, 17).
+    print padRight("        [^]  Rover (Heading " + round(ship:heading, 1) + " deg)", 50) at (0, 18).
   } else {
-    print padRight("  [ Local costmap scanning... ]", 50) at (0, 12).
-    print padRight("", 50) at (0, 13).
+    print padRight("  [ Local costmap scanning... ]", 50) at (0, 13).
     print padRight("", 50) at (0, 14).
     print padRight("", 50) at (0, 15).
     print padRight("", 50) at (0, 16).
-    print padRight("        [^]  Rover", 50) at (0, 17).
+    print padRight("", 50) at (0, 17).
+    print padRight("        [^]  Rover", 50) at (0, 18).
   }
 
-  print "--------------------------------------------------" at (0, 18).
+  print "--------------------------------------------------" at (0, 19).
   rosRenderGlobalFrontierMap(targetGeo).
 
   print "--------------------------------------------------" at (0, 28).
@@ -574,18 +603,35 @@ global function rosUpdateTelemetry {
   }
 }
 
-// Renders a 5x5 regional sector occupancy map around rover (1.0km x 1.0km)
+// Renders a 5x5 regional sector occupancy map around rover with side-by-side Zone Metrics
 global function rosRenderGlobalFrontierMap {
   parameter targetGeo.
 
+  local stepSize is rosGetGravitySectorStep().
+  local zoneSize is stepSize * 5.
+  local degStep is (stepSize / ship:body:radius) * (180 / constant:pi).
+
   local curGeo is ship:geoposition.
-  local curLatIdx is round(curGeo:lat * 50).
-  local curLngIdx is round(curGeo:lng * 50).
+  local curLatIdx is round(curGeo:lat / degStep).
+  local curLngIdx is round(curGeo:lng / degStep).
 
-  local tgtLatIdx is round(targetGeo:lat * 50).
-  local tgtLngIdx is round(targetGeo:lng * 50).
+  local tgtLatIdx is round(targetGeo:lat / degStep).
+  local tgtLngIdx is round(targetGeo:lng / degStep).
 
-  print padRight("GLOBAL FRONTIER MAP (1.0km x 1.0km Grid):", 50) at (0, 19).
+  local curBiome is getCurrentBiome().
+  local distNextZone is round(targetGeo:distance, 1).
+
+  // Right-side zone metrics lines (5 rows matching the 5 grid rows)
+  local sideLines is list(
+    "Zone Index:  #" + rosCurrentFrontier + " (" + ship:body:name + ")",
+    "Zone Size:   " + round(zoneSize) + "m x " + round(zoneSize) + "m",
+    "Next Target: " + distNextZone + "m (" + round(targetGeo:bearing,1) + "d)",
+    "Sector Step: " + round(stepSize) + "m per cell",
+    "Zone Biome:  " + curBiome
+  ).
+
+  local gridHeader is "GLOBAL MAP (" + round(zoneSize) + "m Grid):".
+  print padRight(gridHeader + "   === ZONE METRICS ===", 50) at (0, 20).
 
   from { local rowIdx is 2. } until rowIdx < -2 step { set rowIdx to rowIdx - 1. } do {
     local latIdx is curLatIdx + rowIdx.
@@ -608,7 +654,12 @@ global function rosRenderGlobalFrontierMap {
       }
     }
     set rowStr to rowStr + "|".
-    print padRight(rowStr, 50) at (0, 20 + (2 - rowIdx)).
+
+    local lineIndex is 2 - rowIdx.
+    local sideText is sideLines[lineIndex].
+    local fullRowStr is rowStr + " " + sideText.
+
+    print padRight(fullRowStr, 50) at (0, 21 + lineIndex).
   }
 
   print padRight("  [@]Rover [X]Visited [O]Target [!]Barrier [?]Frontier", 50) at (0, 27).

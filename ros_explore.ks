@@ -48,23 +48,26 @@ until false {
   waitForSunlight().
   waitForFullEC().
 
+  set rosCurrentFrontier to frontierIndex.
+
   // 2. Compute optimal information-gain frontier target using ROS 2 spatial evaluator
   local targetGeo is rosSelectFrontierTarget(ship:geoposition, 250).
 
   hudText("ROS 2 Nav2: Selected Frontier #" + frontierIndex + " [Lat: " + round(targetGeo:lat, 2) + ", Lng: " + round(targetGeo:lng, 2) + "]", 5, 2, 25, rgb(0.2, 0.8, 1.0), true).
 
-  // 3. Drive to selected frontier using ROS 2 Nav2 Costmaps & DWA local planner
-  // Cruise speed: 6.0 m/s (auto-scaled by surface gravity), Arrival radius: 20.0m
-  local arrivalSuccess is rosDriveToCoordinates(targetGeo:lat, targetGeo:lng, 6.0, 20.0, true).
+  // 3. Drive Eastward toward target Zone using Nav2 Costmaps & DWA local planner
+  // Cruise speed: 6.0 m/s (auto-scaled by surface gravity), Arrival radius: 25.0m
+  local arrivalSuccess is rosDriveToCoordinates(targetGeo:lat, targetGeo:lng, 6.0, 25.0, true).
 
   if arrivalSuccess {
-    // 4. Arrived cleanly at frontier - deploy science, transmit data, and reset instruments
+    // 4. Arrived in new Zone! Update zone anchor & deploy science ONCE per Zone entry
+    set rosZoneAnchorGeo to targetGeo.
     runScienceExperiments().
     wait 1.0.
     waitForFullEC().
     set frontierIndex to frontierIndex + 1.
   } else {
-    // 5. Barrier / Unreachable Abort: Immediately drive 30m inland away from water!
-    rosEscapeInland(30).
+    // 5. Barrier Encountered: Execute 2.5D Cell-Stepping Detour (1 cell North/South)
+    rosCellSteppingDetour().
   }
 }

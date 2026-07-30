@@ -653,104 +653,12 @@ global function waitForFullEC {
 // 5. CONTINUOUS TELEMETRY HUD & NAVIGATION ENGINE
 //_________________________________________________
 
-// Live HUD display helper with 2D DEM Radar map and SCANsat status
+// Live HUD display helper: Delegates directly to ROS 2 Nav2 telemetry HUD
 global function updateRoverTelemetry {
-  parameter targetGeo.
+  parameter targetGeo is 0.
   parameter statusMsg is "".
 
-  if defined rosUpdateTelemetry {
-    rosUpdateTelemetry(targetGeo, statusMsg).
-    return.
-  }
-
-  local curSpd is ship:groundspeed.
-  local currentBiome is getCurrentBiome().
-  local distTarget is targetGeo:distance.
-  local distBase is autonavStartGeo:distance.
-  local targetBearing is round(targetGeo:bearing, 1).
-
-  local currentPitch is 90 - vAng(ship:up:vector, ship:facing:forevector).
-  local currentRoll  is 90 - vAng(ship:up:vector, ship:facing:starvector).
-
-  local surfaceG is ship:body:mu / (ship:body:radius^2).
-  local gFactor is sqrt(max(0.1, surfaceG) / 9.81).
-  local bodySpeedCap is max(1.6, 4.0 * gFactor).
-
-  local ecData is getECInfo().
-  local ecCur is ecData[0].
-  local ecMax is ecData[1].
-  local ecPct is 100.
-  if ecMax > 0 { set ecPct to round((ecCur / ecMax) * 100). }
-
-  local scansatStatus is "NOT DETECTED (kOS DEM)".
-  if defined addons and addons:hasSuffix("scansat") {
-    set scansatStatus to "CONNECTED (Active DEM)".
-  }
-
-  local impassableCount is 0.
-  for cell in autonavGrid {
-    if cell["impassable"] { set impassableCount to impassableCount + 1. }
-  }
-
-  local pathText is "Direct (0 deg)".
-  if autonavBestOffset > 0 { set pathText to "Bypass Right (+" + autonavBestOffset + " deg)". }
-  else if autonavBestOffset < 0 { set pathText to "Bypass Left (" + autonavBestOffset + " deg)". }
-
-  local stabilityText is "[STABLE]".
-  if abs(currentRoll) > 10 or abs(currentPitch) > 15 { set stabilityText to "[HAZARD]". }
-
-  print "==================================================" at (0, 0).
-  print "=== ROS 2 NAV2 AUTONAV MISSION CONTROL ===" at (0, 1).
-  print "==================================================" at (0, 2).
-  print "Waypoint Target: Waypoint #" + autonavWaypointIndex + "  [Lat:" + round(targetGeo:lat,2) + ", Lng:" + round(targetGeo:lng,2) + "]" at (0, 3).
-  print "Target Distance: " + padRight(round(distTarget, 1) + " m (Bearing: " + targetBearing + " deg)", 30) at (0, 4).
-  print "Dist from Base:  " + padRight(round(distBase, 1) + " m", 30) at (0, 5).
-  print "Current Biome:   " + padRight(currentBiome, 30) at (0, 6).
-  print "SCANsat Status:  " + padRight(scansatStatus, 30) at (0, 7).
-  print "--------------------------------------------------" at (0, 8).
-  print "Cruising Speed:  " + padRight(round(curSpd, 1) + " / " + round(bodySpeedCap, 1) + " m/s (" + ship:body:name + " g=" + round(surfaceG,2) + ")", 30) at (0, 9).
-  print "Pitch / Roll:    " + padRight(round(currentPitch, 1) + " / " + round(currentRoll, 1) + " deg " + stabilityText, 32) at (0, 10).
-  print "E.Charge:        " + padRight(round(ecCur) + "/" + round(ecMax) + " (" + ecPct + "%)", 30) at (0, 11).
-  print "Nav Corridor:    " + padRight(pathText + " (Cost: " + round(autonavLowestCost,1) + ")", 30) at (0, 12).
-  print "Hazards Scan:    " + padRight(impassableCount + " / " + autonavGrid:length + " cells blocked", 30) at (0, 13).
-  print "--------------------------------------------------" at (0, 14).
-  print "2D LOCAL TERRAIN RADAR MAP (0-30m Ahead):         " at (0, 15).
-
-  if autonavGrid:length >= 25 {
-    from { local row is 4. } until row < 0 step { set row to row - 1. } do {
-      local rowStr is "  [ ".
-      from { local col is 0. } until col >= 5 step { set col to col + 1. } do {
-        local cellIdx is row * 5 + col.
-        local cell is autonavGrid[cellIdx].
-        if cell["impassable"] {
-          set rowStr to rowStr + "#  ".
-        } else if cell:haskey("isPath") and cell["isPath"] {
-          set rowStr to rowStr + "*  ".
-        } else if cell["cost"] > 10 {
-          set rowStr to rowStr + "~  ".
-        } else {
-          set rowStr to rowStr + ".  ".
-        }
-      }
-      set rowStr to rowStr + "]  " + ((row + 1) * 6) + "m".
-      print padRight(rowStr, 48) at (0, 16 + (4 - row)).
-    }
-    print "        [^]  Rover (Heading " + round(ship:heading, 1) + " deg)   " at (0, 21).
-  } else {
-    print "  [ Grid map scanning... ]                        " at (0, 16).
-    print "                                                  " at (0, 17).
-    print "                                                  " at (0, 18).
-    print "                                                  " at (0, 19).
-    print "                                                  " at (0, 20).
-    print "                                                  " at (0, 21).
-  }
-
-  print "--------------------------------------------------" at (0, 22).
-  if statusMsg <> "" {
-    print "Status: " + padRight(statusMsg, 40) at (0, 23).
-  } else {
-    print "                                                  " at (0, 23).
-  }
+  rosUpdateTelemetry(targetGeo, statusMsg).
 }
 
 // Main Curiosity-style step-based autonomous drive loop
