@@ -54,11 +54,11 @@ global function rosGetGravityRatio {
 }
 
 // Dynamic maximum climb angle scaled by surface gravity
-// Low gravity (Mun ~0.166 g) -> max climb ~10 deg to prevent rollover
+// Low gravity (Mun ~0.166 g) -> max climb ~13 deg
 // Standard gravity (Kerbin 1.0 g) -> max climb up to 18 deg
 global function rosGetMaxClimbAngle {
   local gRatio is rosGetGravityRatio().
-  return max(8.0, min(18.0, 8.0 + (10.0 * gRatio))).
+  return max(13.0, min(18.0, 12.0 + (6.0 * gRatio))).
 }
 
 // Dynamic maximum safe speed scaled by sqrt(gravity ratio)
@@ -191,10 +191,13 @@ global function rosSampleCostmap {
         set hazardType to "NEGATIVE_DROP".
       }
       // 2. POSITIVE RIDGE LAYER (Steep Ridge Wall vs Climbable Crest)
-      else if slopeAngle > maxClimbAngle or macroSlope > (maxClimbAngle + 4) {
+      // Positive ridge hazards ONLY apply to UPHILL climbs (hDiff > 0.3m or stepDrop > 0.2m)
+      local isUphill is (hDiff > 0.3 or stepDrop > 0.2).
+
+      if isUphill and (slopeAngle > maxClimbAngle or macroSlope > (maxClimbAngle + 4)) {
         set isImpassable to true.
         set hazardType to "STEEP_RIDGE".
-      } else if slopeAngle > 6.0 {
+      } else if isUphill and slopeAngle > 6.0 {
         set hazardType to "CLIMBABLE_RIDGE".
       }
 
@@ -340,12 +343,13 @@ global function rosCalculateDwaPath {
 // 5. ROS 2 FRONTIER-BASED EXPLORATION ENGINE
 //_________________________________________________
 
-// Helper: Converts lat/lng into a coarse sector grid key (0.02 deg ~ 200m resolution)
+// Helper: Converts lat/lng into a coarse sector grid key prefixed by body name (~200m resolution)
 global function rosGetSectorKey {
   parameter geo.
+  local bodyName is ship:body:name.
   local latIdx is round(geo:lat * 50).
   local lngIdx is round(geo:lng * 50).
-  return latIdx + "_" + lngIdx.
+  return bodyName + "_" + latIdx + "_" + lngIdx.
 }
 
 // Generates candidate frontier waypoints around rover and picks best information-gain target
@@ -712,15 +716,17 @@ global function rosDriveToCoordinates {
     }
 
     // 7. Bug2 Continuous Barrier & Shoreline Detection
-    local barrierDropCount is 0.
+    // Only triggers if 5+ cells in the CENTER driving corridor (abs(side) <= 7m) are blocked
+    // OR if DWA cannot find any open corridor (rosLowestCost >= 90000)
+    local centerBarrierCount is 0.
     for cell in rosCostmap {
-      if cell["fwd"] < 22 and (cell["hazard"] = "NEGATIVE_DROP" or cell["hazard"] = "STEEP_RIDGE") {
-        set barrierDropCount to barrierDropCount + 1.
+      if cell["fwd"] <= 22 and abs(cell["side"]) <= 7.0 and (cell["hazard"] = "NEGATIVE_DROP" or cell["hazard"] = "STEEP_RIDGE") {
+        set centerBarrierCount to centerBarrierCount + 1.
       }
     }
-    if barrierDropCount >= 3 {
+    if centerBarrierCount >= 5 or (rosLowestCost >= 90000 and centerBarrierCount >= 3) {
       local tgtKey is rosGetSectorKey(targetGeo).
-      rosBlacklistSector(tgtKey, "Shoreline / Barrier Wall").
+      rosBlacklistSector(tgtKey, "Continuous Barrier Wall").
       hudText("Continuous Barrier Detected! Blacklisting Sector & Turning Inland...", 4, 2, 25, rgb(1, 0.2, 0.2), true).
 
       local escapeHDG is mod(ship:heading + 180, 360).

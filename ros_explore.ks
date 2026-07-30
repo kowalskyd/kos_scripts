@@ -18,6 +18,10 @@ if exists("0:/lib/camera_director.ks") {
 
 wait 0.1.
 
+// Reset spatial memory lists for fresh exploration run
+set rosVisitedSectors to list().
+set rosBlacklistedSectors to list().
+
 clearScreen.
 print "==================================================".
 print "=== ROS 2 NAV2 AUTONAV ROVER MISSION INITIALIZATION ===".
@@ -43,7 +47,7 @@ until false {
   waitForFullEC().
 
   // 2. Compute optimal information-gain frontier target using ROS 2 spatial evaluator
-  local targetGeo is rosSelectFrontierTarget(ship:geoposition, 650).
+  local targetGeo is rosSelectFrontierTarget(ship:geoposition, 250).
 
   hudText("ROS 2 Nav2: Selected Frontier #" + frontierIndex + " [Lat: " + round(targetGeo:lat, 2) + ", Lng: " + round(targetGeo:lng, 2) + "]", 5, 2, 25, rgb(0.2, 0.8, 1.0), true).
 
@@ -58,7 +62,7 @@ until false {
     waitForFullEC().
     set frontierIndex to frontierIndex + 1.
   } else {
-    // 5. Barrier / Unreachable Abort: Immediately drive 150m inland away from water!
-    rosEscapeInland(150).
+    // 5. Barrier / Unreachable Abort: Immediately drive 30m inland away from water!
+    rosEscapeInland(30).
   }
 }
