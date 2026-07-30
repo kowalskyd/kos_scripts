@@ -262,8 +262,18 @@ global function executePointTurn {
   local hdgDiff is mod(targetHDG - ship:heading + 540, 360) - 180.
   if abs(hdgDiff) < 4.0 { return. }
 
-  // 1. MUST come to an absolute full stop first before attempting point turn
-  //executeFullStop("Stopping before " + statusMsg).
+  // Slow down first if moving faster than 1.2 m/s before executing turn correction
+  if ship:groundspeed > 1.2 {
+    brakes on.
+    lock wheelthrottle to 0.
+    wait until ship:groundspeed < 1.0 or not brakes.
+    brakes off.
+  }
+
+  local gRatio is 1.0.
+  if defined rosGetGravityRatio { set gRatio to rosGetGravityRatio(). }
+  local turnThrottleHi is min(0.35, max(0.08, 0.18 * gRatio)).
+  local turnThrottleLo is min(0.12, max(0.04, 0.08 * gRatio)).
 
   sas on.
   lock wheelsteering to targetHDG.
@@ -272,17 +282,24 @@ global function executePointTurn {
   until abs(mod(targetHDG - ship:heading + 540, 360) - 180) < 3.5 or (time:seconds - turnStart > 7.0) {
     brakes off.
     local currentDiff is abs(mod(targetHDG - ship:heading + 540, 360) - 180).
-    if currentDiff > 18 {
-      lock wheelthrottle to 0.10.
+    
+    if ship:groundspeed > 1.5 {
+      lock wheelthrottle to 0.
+    } else if currentDiff > 18 {
+      lock wheelthrottle to turnThrottleHi.
     } else {
-      lock wheelthrottle to 0.03.
+      lock wheelthrottle to turnThrottleLo.
     }
-    updateRoverTelemetry(ship:geoposition, statusMsg + " (" + round(ship:heading, 1) + " -> " + round(targetHDG, 1) + " deg)").
+
+    if defined rosUpdateTelemetry {
+      rosUpdateTelemetry(ship:geoposition, statusMsg + " (" + round(ship:heading, 1) + " -> " + round(targetHDG, 1) + " deg)").
+    } else {
+      updateRoverTelemetry(ship:geoposition, statusMsg + " (" + round(ship:heading, 1) + " -> " + round(targetHDG, 1) + " deg)").
+    }
     wait 0.05.
   }
 
-  // 2. Settle rover to complete stop after completing turn
-  //executeFullStop("Settling after " + statusMsg).
+  lock wheelthrottle to 0.
   wait 0.05.
 }
 
@@ -391,13 +408,9 @@ global function setHibernation {
         }
       }
       
+      // ModuleCommand hibernation is intentionally skipped to prevent shutting down the kOS CPU
       if p:hasmodule("ModuleCommand") {
-        local cmd is p:getModule("ModuleCommand").
-        if cmd:hasfield("hibernate") {
-          cmd:setField("hibernate", true).
-        } else if cmd:hasfield("hibernation") {
-          cmd:setField("hibernation", true).
-        }
+        // Core kept active for kOS CPU execution
       }
 
       if p:hasmodule("ModuleWheelMotor") {
@@ -523,10 +536,13 @@ global function waitForSunlight {
       local ecPct is 100.
       if ecData[1] > 0 { set ecPct to round((ecData[0] / ecData[1]) * 100). }
 
-      print "--- Night Mode (Hibernation & Auto-Warp Active) ---" at (0, 7).
-      print "Sun Angle:  " + padRight(sunAngle + " deg (Waiting < 89)", 30) at (0, 8).
-      print "E.Charge:   " + padRight(round(ecData[0]) + "/" + round(ecData[1]) + " (" + ecPct + "%)", 30) at (0, 9).
-      print "                                                                " at (0, 10).
+      if defined rosUpdateTelemetry {
+        rosUpdateTelemetry(ship:geoposition, "Night Mode (Waiting for Sunlight)").
+      } else {
+        print "--- Night Mode (Hibernation & Auto-Warp Active) ---" at (0, 7).
+        print "Sun Angle:  " + padRight(sunAngle + " deg (Waiting < 89)", 30) at (0, 8).
+        print "E.Charge:   " + padRight(round(ecData[0]) + "/" + round(ecData[1]) + " (" + ecPct + "%)", 30) at (0, 9).
+      }
       wait 0.2.
     }
 
@@ -535,9 +551,11 @@ global function waitForSunlight {
     
     setHibernation(false).
 
-    print "                                                                " at (0, 7).
-    print "                                                                " at (0, 8).
-    print "                                                                " at (0, 9).
+    if not (defined rosUpdateTelemetry) {
+      print "                                                                " at (0, 7).
+      print "                                                                " at (0, 8).
+      print "                                                                " at (0, 9).
+    }
   }
 }
 
@@ -606,9 +624,12 @@ global function waitForFullEC {
       local ecPct is 100.
       if maxEC > 0 { set ecPct to round((curEC / maxEC) * 100). }
 
-      print "--- Charging Batteries (Hibernation Active) ---" at (0, 7).
-      print "E.Charge:   " + padRight(round(curEC) + "/" + round(maxEC) + " (" + ecPct + "%)", 30) at (0, 8).
-      print "                                                                " at (0, 9).
+      if defined rosUpdateTelemetry {
+        rosUpdateTelemetry(ship:geoposition, "Recharging Batteries (" + ecPct + "%)").
+      } else {
+        print "--- Charging Batteries (Hibernation Active) ---" at (0, 7).
+        print "E.Charge:   " + padRight(round(curEC) + "/" + round(maxEC) + " (" + ecPct + "%)", 30) at (0, 8).
+      }
       wait 0.2.
     }
 
@@ -617,8 +638,10 @@ global function waitForFullEC {
 
     setHibernation(false).
 
-    print "                                                                " at (0, 7).
-    print "                                                                " at (0, 8).
+    if not (defined rosUpdateTelemetry) {
+      print "                                                                " at (0, 7).
+      print "                                                                " at (0, 8).
+    }
   }
 }
 

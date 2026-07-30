@@ -2,15 +2,15 @@
 
 An autonomous guidance, navigation, and control (GNC) flight software suite written in kerboscript for the **kOS (Kerbal Operating System)** mod in **Kerbal Space Program (KSP)**.
 
-The **KAL-9000** suite provides end-to-end mission automation—from launchpad liftoff and orbital insertion, to lunar transfers, terrain-aware suicide burn landings, autonomous 6-DOF rendezvous and docking, ground rover navigation, and passenger in-flight entertainment displays.
+The **KAL-9000** suite provides end-to-end mission automation—from launchpad liftoff and orbital insertion, to lunar transfers, terrain-aware suicide burn landings, autonomous 6-DOF rendezvous and docking, ROS 2 Nav2 autonomous rover exploration, and passenger in-flight entertainment displays.
 
 ---
 
 ## Video Demonstration
 
-[![KAL-9000 Mun Mission Demonstration](https://img.youtube.com/vi/pz-3-4b7OJE/0.jpg)](https://www.youtube.com/watch?v=pz-3-4b7OJE)
+[![KAL-9000 Mission Demonstration](https://img.youtube.com/vi/H44tpVnJ75o/0.jpg)](https://www.youtube.com/watch?v=H44tpVnJ75o&feature=youtu.be)
 
-*Watch the KAL-9000 flight software execute a full automated Mun mission from Kerbin liftoff to lunar landing and return.*
+*Watch the KAL-9000 flight software suite in action across planetary missions, autonomous landings, and ROS 2 rover autonav exploration.*
 
 ---
 
@@ -25,17 +25,18 @@ The **KAL-9000** suite provides end-to-end mission automation—from launchpad l
   - [Automated Minmus Mission Suite (`minmusMission.ks`, `minmus.ks`, `minmusLand.ks`, `minmusLaunch.ks`, `minmusReturn.ks`)](#automated-minmus-mission-suite-minmusmissionks-minmusks-minmuslandks-minmuslaunchks-minmusreturnks)
   - [Orbital Rendezvous (`rendezvous.ks`) & Docking (`dock.ks`)](#orbital-rendezvous-rendezvousks--docking-dockks)
   - [Booster Powered Descent & KSC Landing (`powereddescent.ks`)](#booster-powered-descent--ksc-landing-powereddescentks)
-  - [Rover Surface Exploration (`explore.ks`)](#rover-surface-exploration-exploreks)
+  - [ROS 2 Autonomous Rover Exploration (`ros_explore.ks`)](#ros-2-autonomous-rover-exploration-ros_exploreks)
   - [In-Flight Entertainment System (`ife.ks`)](#in-flight-entertainment-system-ifeks)
 - [Library Deep Dive & GNC Modules](#library-deep-dive--gnc-modules)
   - [KAL-9000 Telemetry & Terminal HUD (`lib/hud.ks`)](#kal-9000-telemetry--terminal-hud-libhudks)
+  - [ROS 2 Nav2 Autonav Engine (`lib/ros_nav2.ks`)](#ros-2-nav2-autonav-engine-libros_nav2ks)
   - [Orbital Mechanics Engine (`lib/mnv.ks`)](#orbital-mechanics-engine-libmnvks)
   - [Autonomous Docking Guidance System (`lib/docking.ks`)](#autonomous-docking-guidance-system-libdockingks)
   - [Cinematic Camera Director (`lib/camera_director.ks`)](#cinematic-camera-director-libcamera_directorks)
   - [Pre-Flight Diagnostics Engine (`lib/diagnostics.ks`)](#pre-flight-diagnostics-engine-libdiagnosticsks)
   - [Systems Deployment Manager (`lib/system.ks`)](#systems-deployment-manager-libsystemks)
   - [Interplanetary Transfers (`lib/transfer.ks`)](#interplanetary-transfers-libtransferks)
-  - [Surface Rover Control (`lib/rover.ks`)](#surface-rover-control-libroverks)
+  - [Surface Rover Support Library (`lib/rover.ks`)](#surface-rover-support-library-libroverks)
   - [Geostationary Orbit Mechanics (`lib/geostationary.ks`)](#geostationary-orbit-mechanics-libgeostationaryks)
   - [Math & Vector Utilities (`lib/misc.ks`)](#math--vector-utilities-libmiscks)
 - [Bootloader & Low-Level System Scripts](#bootloader--low-level-system-scripts)
@@ -52,6 +53,7 @@ The **KAL-9000** suite provides end-to-end mission automation—from launchpad l
 - **Suicide Burn & Landing Control**: Real-time stopping distance calculation ($d = \frac{v^2}{2(a - g)}$) compared against radar altitude above ground level ($AGL$), featuring automatic landing site darkness checks to delay deorbit burns into daylight.
 - **Booster Recovery & Pad Targeting**: Trajectory bisection algorithms (`getEntryTime`) predicting entry interface positions with planetary rotation corrections, retro-propulsion, and aerodynamic steering to land first-stage boosters back at the KSC Launchpad.
 - **6-DOF Autonomous Docking**: Interactive port selection, standoff approach corridor box alignment, relative velocity dampening, and 3-axis RCS translation control loops.
+- **ROS 2 Nav2 Autonomous Rover Exploration**: 4-tier Layered Perception & Navigation Pyramid incorporating DWA local path planning, 3D surface normal gradient vectors ($\vec{N}$), SCANsat orbital DEM pre-filtering, 35m LaserDist raycasting, dynamic gravity scaling, Bug2 barrier perimeter escape, and unreachability sector blacklisting.
 - **Dynamic Camera Automation**: Integration with `kOS-StockCamera` to execute cinematic multi-cut sequence transitions on staging events, maneuver burns, landings, and timewarp safety locks.
 - **Dual-Processor Support & IFE**: Terminal GUI supporting 50x24 split-screen telemetry and chatter logs on primary flight computers, paired with a dedicated In-Flight Entertainment (`ife.ks`) system featuring live ASCII orbital radar maps for secondary processors.
 
@@ -59,7 +61,7 @@ The **KAL-9000** suite provides end-to-end mission automation—from launchpad l
 
 ## System Architecture
 
-```
+```text
 Script/
 ├── boot/                   # KSP VAB/SPH core bootloaders
 │   ├── exploreBoot.ks      # Bootloader for rover exploration missions
@@ -78,7 +80,8 @@ Script/
 │   ├── hud.ks              # KAL-9000 50x24 terminal UI, telemetry, and chatter log
 │   ├── misc.ks             # List min/max and utility functions
 │   ├── mnv.ks              # Vis-viva math, maneuver node execution, G-limiting
-│   ├── rover.ks            # Ground rover PID steering, hazard check, and science
+│   ├── ros_nav2.ks         # ROS 2 Nav2 Costmaps, DWA Planner, Surface Normal Engine & Blacklisting
+│   ├── rover.ks            # Ground rover power management, point turns, and science
 │   ├── system.ks           # Auto-deployer for fairings, antennas, solar panels
 │   └── transfer.ks         # Phase angle, synodic period, and ejection math
 ├── crafts/                 # KSP vessel definitions
@@ -97,7 +100,8 @@ Script/
 ├── rendezvous.ks           # Long-range phase angle matching and velocity kill
 ├── dock.ks                 # Target acquisition and 6-DOF docking driver
 ├── powereddescent.ks       # KSC booster return, boostback, and pad landing
-├── explore.ks              # Procedural surface waypoint rover mapping program
+├── ros_explore.ks          # ROS 2 Nav2 Autonomous Frontier Exploration Controller (Primary)
+├── explore.ks              # Legacy waypoint rover explorer
 └── ife.ks                  # Dual-processor passenger In-Flight Entertainment
 ```
 
@@ -143,14 +147,15 @@ Automates boostback, atmospheric re-entry, and precision landing of reusable fir
 - Performs boostback burn to align predicted impact site with KSC coordinates.
 - Guides aerodynamic orientation during re-entry and triggers terminal suicide burn.
 
-### Rover Surface Exploration (`explore.ks`)
+### ROS 2 Autonomous Rover Exploration (`ros_explore.ks`)
 
-Automated long-range ground exploration program operating on rover craft:
-- **Biome-Smart Navigation**: Computes long-distance cross-country waypoints (2,500m to 4,500m steps). Continuously tracks current surface biome/sector (`getCurrentBiome()`); automatically engages brakes, deploys science modules (`ModuleScienceExperiment`), transfers data to the Experiment Storage Unit (`ModuleScienceContainer`), resets sensors, and resumes driving whenever crossing into a newly discovered biome.
-- **Proactive Ridge Lookahead Scanner**: Projects terrain 15m to 40m ahead along facing vector (`ship:body:geopositionof(...)`). Detects cliff ledges and steep drop-offs ($>14^\circ$ drop) and automatically slows the rover to 2.0 m/s before reaching the edge.
-- **Terrain-Adaptive Speed Control**: Cruising speed automatically scales up to 10 m/s on flat terrain, while dynamically throttling down on sharp turns ($>15^\circ$), steep slopes ($>10^\circ$), or hill crests to prevent centrifugal side-flipping.
-- **Mid-Air Jump & Flip Protection**: Features a mid-air reaction wheel stabilizer (`handleAirborne()`) that levels the rover parallel to the horizon for safe 4-wheel touchdowns during low-gravity jumps, paired with an auto-righting flip recovery routine (`recoverFromFlip()`).
-- **High-Speed RAILS Timewarp**: Warps stationary rovers through lunar night to sunrise and fast-charges batteries to 100% capacity at up to 10,000x speed (`RAILS` mode).
+Primary ground exploration program implementing a 4-tier Layered Perception & Navigation Pyramid based on ROS 2 Nav2 standards:
+- **ROS 2 Nav2 Local Costmap & DWA Planner**: Computes 35m 2D local occupancy costmaps (`rosSampleCostmap`) using Dynamic Window Approach (DWA) candidate corridor evaluations (`rosCalculateDwaPath`) to dynamically bypass terrain hazards.
+- **Surface Normal Gradient Engine ($\vec{N}$)**: Calculates 3D surface normals via cross-product elevation sampling to classify positive climbable ridges (`/`), steep impassable walls (`^`), and true cliff drop-offs (`!`).
+- **Dynamic Surface Gravity Scaling**: Speeds and wheel throttle limits automatically scale based on local surface gravity ($g_{surface}$), capping cruise speeds on low-gravity bodies (Mun/Minmus) to $1.5 - 2.0\text{ m/s}$ with proportional throttle and zero-lock engine braking to eliminate wheelspin and skidding.
+- **Layered Perception & SCANsat Pre-Filtering**: Integrates orbital SCANsat DEM maps to pre-blacklist liquid oceans (`terrainheight <= 5.0m`) and steep mountain ranges before driving begins. Gracefully degrades to native kOS local DEM probing if satellite coverage is unmapped.
+- **Unreachability Blacklisting & Bug2 Barrier Escape**: Automatically blacklists stagnant or unreachable sector keys (`rosBlacklistedSectors`). When encountering extended coastlines or crater walls, executes a $180^\circ$ turn and a 150m Inland Escape Drive (`rosEscapeInland`) away from the barrier.
+- **2D Global Frontier Map Telemetry**: Real-time 30-row un-truncated HUD displaying 35m local costmap radar and a regional 1.0km x 1.0km 2D Occupancy Grid plotting Rover (`@`), Active Target (`O`), Visited Sectors (`X`), and Blacklisted Barriers (`!`).
 
 ### In-Flight Entertainment System (`ife.ks`)
 
@@ -172,6 +177,17 @@ Provides a terminal GUI framework tailored for standard 50x24 kOS character term
 - `updateResources()`: Reads liquid fuel, oxidizer, monopropellant, electric charge, crew count, and active pilot name.
 - `logChatter(sender, message)`: Pushes radio chatter into a 6-row circular buffer display at the bottom of the terminal screen.
 - `runDiagnostics(labels)`: Renders pre-flight system check list with step-by-step validation status indicators.
+
+### ROS 2 Nav2 Autonav Engine ([`lib/ros_nav2.ks`](file:///Users/danielkowalsky/Library/Application%20Support/Steam/steamapps/common/Kerbal%20Space%20Program/Ships/Script/lib/ros_nav2.ks))
+
+The GNC navigation engine for autonomous mobile robotics:
+- `rosGetSurfaceG()` & `rosGetDynamicMaxSpeed()`: Calculates local surface gravity $g_{surface}$ and scales safe cruising speed cap $\text{safeSpd} = \max(1.5, \min(v_{\text{base}}, v_{\text{base}} \sqrt{g_{ratio}}))$ and wheel throttle limit $\text{maxThrottle} = \min(1.0, \max(0.12, 0.45 g_{ratio}))$.
+- `rosGetTerrainNormalAndGradient()`: Computes 3D terrain surface normals ($\vec{N}$) and steepest gradient direction.
+- `rosSampleCostmap(forwardSpan, sideSpan)`: Probes a 5x5 35m local grid, classifying terrain cells into `CLEAR`, `CLIMBABLE_RIDGE`, `STEEP_RIDGE`, `NEGATIVE_DROP`, or `PHYSICAL_OBSTACLE` (gated LaserDist range $< 35\text{m}$).
+- `rosCalculateDwaPath(targetGeo, costmap)`: Evaluates DWA corridor heading offsets ($0^\circ, \pm 15^\circ, \pm 30^\circ$), applying perpendicular alignment penalties near ridges.
+- `rosSelectFrontierTarget(currentGeo, scanRadius)`: Generates candidate frontiers using a 3-point line probe to filter out water intersections, ranking frontiers by information gain score $S = 1000 - \text{VisitedPenalty} - (\text{MacroSlope} \times 25)$.
+- `rosBlacklistSector(key, reason)` & `rosEscapeInland(escapeDist)`: Logs unnavigable sector keys to `rosBlacklistedSectors` and executes 150m inland escape maneuvers on barrier aborts.
+- `rosUpdateTelemetry(targetGeo, statusMsg)` & `rosRenderGlobalFrontierMap()`: Renders un-truncated 50-char terminal HUD and 2D Global Frontier Occupancy Map.
 
 ### Orbital Mechanics Engine ([`lib/mnv.ks`](file:///Users/danielkowalsky/Library/Application%20Support/Steam/steamapps/common/Kerbal%20Space%20Program/Ships/Script/lib/mnv.ks))
 
@@ -223,13 +239,13 @@ Calculates interplanetary transfer windows and ejection burns:
 - `computePhaseAngle(targetBody)`: Determines true anomaly difference between vessel and target body relative to longitude of ascending node.
 - `transferToBody(targetBody, doWarp)`: Calculates synodic period $T_{\text{syn}} = \frac{T_1 T_2}{T_2 - T_1}$, warps to transfer window, adds maneuver node, and executes ejection burn.
 
-### Surface Rover Control ([`lib/rover.ks`](file:///Users/danielkowalsky/Library/Application%20Support/Steam/steamapps/common/Kerbal%20Space%20Program/Ships/Script/lib/rover.ks))
+### Surface Rover Support Library ([`lib/rover.ks`](file:///Users/danielkowalsky/Library/Application%20Support/Steam/steamapps/common/Kerbal%20Space%20Program/Ships/Script/lib/rover.ks))
 
-Ground rover autonomy library:
-- `driveToCoordinates(targetLat, targetLng, maxSpeed, arrivalRadius, autoCollectBiomes)`: Autonomously navigates to waypoints with 30m forward terrain slope lookahead (`ship:body:geopositionof(...)`), cornering speed governors ($3.5\text{ m/s}$ on turns $>15^\circ$), inclination throttling ($4\text{ m/s}$ on slopes $>10^\circ$), and mid-transit biome boundary science triggers.
+Ground rover support and utility library:
+- `executePointTurn(targetHDG)`: Gravity-scaled zero-speed point turns with pre-turn speed reduction to $<1.0\text{ m/s}$ and in-turn speed limiting to prevent overspeeding on Mun/Minmus.
 - `handleAirborne()`: Monitors flight status when airborne; uses SAS reaction wheel torque to level pitch and roll parallel to the horizon for safe 4-wheel landings.
 - `recoverFromFlip()`: Detects vessel rollovers ($>45^\circ$ tilt) and applies reaction wheel torque impulses to auto-upright the rover back onto its wheels.
-- `waitForSunlight()` & `waitForFullEC()`: Suspends operations during lunar night or low battery; engages RAILS timewarp up to $10,000\times$ to fast-forward to sunrise/full battery in $<1$ second.
+- `waitForSunlight()` & `waitForFullEC()`: Suspends operations during lunar night or low battery with zero-power hibernation, keeping the ROS 2 Autonav HUD and 2D Global Frontier Map active on screen.
 - `runScienceExperiments()`: Deploys all active `ModuleScienceExperiment` parts, transmits data over radio link, transfers data into `ModuleScienceContainer`, and resets sensors for repeat use.
 
 ### Geostationary Orbit Mechanics ([`lib/geostationary.ks`](file:///Users/danielkowalsky/Library/Application%20Support/Steam/steamapps/common/Kerbal%20Space%20Program/Ships/Script/lib/geostationary.ks))
@@ -250,7 +266,7 @@ Provides `minOf(newList)` and `maxOf(newList)` list search functions.
 - **`boot/launch_boot.ks`**: Assigned to kOS core in VAB. Waits 2 seconds, switches volume to Archive (`switch to 0.`), and runs `launch.ks`.
 - **`boot/exploreBoot.ks`**, **`boot/ifeBoot.ks`**, **`boot/rdvBoot.ks`**: Core bootloaders for rover, IFE, and rendezvous vessels.
 - **`sys/AUTORUN.ks`**: Main boot execution router.
-- **`sys/COPY.ks`**: Copies mission scripts from Volume 0 (Archive) to Volume 1 (Local Processor Storage) for offline execution outside antenna range.
+- **`sys/COPY.ks`**: Copies mission scripts from Volume 0 (Archive) to Volume 1 (Local Core Storage) for offline execution outside antenna range.
 - **`sys/DELAY.ks`**: System timer execution delay utility.
 
 ---
@@ -281,6 +297,6 @@ The repository includes the primary flight-ready vessel configuration file:
    // Perform autonomous 6-DOF docking
    run dock.
 
-   // Launch ground rover autonomous exploration mapping
-   run explore.
+   // Launch ROS 2 Nav2 autonomous rover exploration mapping
+   runpath("0:/ros_explore.ks").
    ```
