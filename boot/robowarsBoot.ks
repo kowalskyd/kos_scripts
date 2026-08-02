@@ -1,6 +1,6 @@
 //_________________________________________________
 //‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
-// ROS 2 KOS AUTOMATIC ROBOT WARS BOOT SCRIPT
+// ROS 2 KOS ROBOT WARS BOOT SCRIPT
 //_________________________________________________
 //‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
 
@@ -9,7 +9,7 @@ set CONFIG:IPU to 1000.
 
 brakes off.
 print "==================================================".
-print "=== ROS 2 ROBOT WARS COMBAT CORE BOOTING... ===".
+print "=== ROS 2 TACTICAL ROBOT WARS CORE BOOTING... ===".
 print "==================================================".
-
+wait 10.
 runPath("0:/ros_battle.ks").
